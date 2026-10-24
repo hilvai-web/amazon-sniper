@@ -16,9 +16,9 @@ AmazonSniper/
 │   └── gui.py           # interfaz oscura CustomTkinter
 ├── extractor_amazon.py  # extractor del Top 1000 de Best Sellers por categoría (Playwright)
 ├── extractor/           # config (PROXIES, retrasos...), navegador, recorrido, guardado CSV
-├── instalar_extractor.ps1  # instala y lanza el extractor desde PowerShell
 ├── tests/test_core.py   # pruebas sin red (pytest)
-├── actualizar.ps1       # instala/actualiza todo desde GitHub con un comando
+├── actualizar.ps1       # descarga el .exe de la última Release y crea accesos directos
+├── .github/workflows/release.yml  # compila y publica el .exe
 ├── build.bat            # compila el .exe con un doble clic
 ├── requirements.txt
 ├── asins_ejemplo.txt
@@ -34,13 +34,25 @@ Para cada ASIN y marketplace marcado descarga la ficha `amazon.xx/dp/ASIN` y cal
 
 Hay alerta cuando el descuento ≥ *Descuento mínimo*, el precio ≤ *Precio máximo* (0 = sin límite) y el producto está disponible. La base de datos evita duplicados: el mismo producto no vuelve a avisar en 24 h salvo que baje todavía más.
 
-## Instalar o actualizar (Windows, PowerShell)
+## Instalar en cualquier PC con Windows
 
-Con Python 3.12 instalado, un solo comando instala o actualiza la app en `C:\Users\<tu usuario>\AmazonSniper` y el extractor en `C:\Users\<tu usuario>\AmazonExtractor`. Tu configuración, tu historial y tus CSV se conservan:
+Amazon Sniper es un único `AmazonSniper.exe` portable: no necesita Python ni instalar nada. Usa el Microsoft Edge que ya trae Windows para buscar las listas de productos.
+
+**Opción A, un comando** (descarga el .exe en `C:\Users\<usuario>\AmazonSniper`, crea accesos directos y lo abre):
 
 ```powershell
 irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.ps1 | iex
 ```
+
+**Opción B, a mano**: descarga `AmazonSniper.exe` desde [Releases](https://github.com/hilvai-web/amazon-sniper/releases/latest) y ponlo en cualquier carpeta (o un USB). Evita el Escritorio: la app guarda sus datos junto al .exe y Windows puede bloquear la escritura ahí.
+
+Junto al .exe se crean `config.json` (ajustes), `alertas.db` (historial) y `listas/` (productos por categoría). Para llevarte la app con tus datos a otro PC, copia la carpeta entera.
+
+## Actualizaciones
+
+Al abrirse, la app consulta la última [Release](https://github.com/hilvai-web/amazon-sniper/releases/latest). Si hay una versión nueva aparece el botón verde **⬆ Actualizar a vX**: descarga el .exe nuevo, se cierra, se sustituye y vuelve a abrirse, sin tocar tus datos.
+
+Para publicar una versión: sube el número `APP_VERSION` en `sniper/config.py` y haz push a `main`. GitHub Actions (`.github/workflows/release.yml`) pasa los tests, compila el .exe en Windows y crea la Release `vX.Y.Z`.
 
 ## Uso
 
@@ -52,21 +64,17 @@ irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.p
 
 `alertas.db`, `config.json` se crean en la misma carpeta que el `.exe`.
 
-## Compilar el .exe (en Windows, con Python 3.10–3.12 instalado)
+## Compilar el .exe a mano
 
-Doble clic en `build.bat`, o a mano:
+Normalmente lo compila GitHub Actions. En local (Windows, Python 3.12): doble clic en `build.bat`, o:
 
 ```bat
 pip install -r requirements.txt
 pyinstaller --noconfirm --clean --onefile --noconsole --name AmazonSniper ^
-  --collect-all customtkinter ^
-  --collect-data certifi ^
-  --hidden-import aiohttp --hidden-import lxml --hidden-import lxml.etree ^
-  --hidden-import bs4 --hidden-import tkinter --hidden-import sqlite3 ^
+  --collect-all customtkinter --collect-data certifi ^
+  --hidden-import lxml.etree --hidden-import playwright.async_api ^
   main.py
 ```
-
-Resultado: `dist\AmazonSniper.exe`, que funciona en cualquier Windows 10/11 sin Python. Para añadir icono: `--icon icono.ico`. Si Windows Defender lo marca (pasa con muchos .exe de PyInstaller sin firmar), es un falso positivo habitual; firmarlo o compilar con `--onedir` lo reduce.
 
 ## Velocidad, bloqueos y límites (léelo)
 

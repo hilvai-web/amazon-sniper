@@ -19,7 +19,17 @@ class BrowserSession:
         self._proxies = itertools.cycle(usable) if usable else None
 
     async def start(self) -> None:
-        self._browser = await self._pw.chromium.launch(headless=config.HEADLESS)
+        errors = []
+        for channel in config.BROWSER_CHANNELS:
+            try:
+                self._browser = await self._pw.chromium.launch(
+                    headless=config.HEADLESS, **({"channel": channel} if channel else {}))
+                break
+            except Exception as exc:  # noqa: BLE001 - probamos el siguiente navegador
+                errors.append(f"{channel or 'chromium'}: {str(exc).splitlines()[0]}")
+        else:
+            raise RuntimeError("No encuentro ningún navegador compatible (Microsoft Edge o Chrome). "
+                               "Instala Edge o Chrome y vuelve a intentarlo.\n" + "\n".join(errors))
         await self.new_identity()
 
     async def new_identity(self) -> None:

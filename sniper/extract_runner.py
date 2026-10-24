@@ -1,114 +1,84 @@
-"""Lanza el extractor de ASINs (proyecto AmazonExtractor) desde la app.
+"""Ejecuta el extractor de ASINs dentro de la propia app, en un hilo aparte.
 
-El extractor vive en su propia carpeta con su .venv y Playwright, así que se
-ejecuta como proceso aparte y su salida se reenvía a la cola de eventos de la GUI:
+Las listas se guardan en la carpeta "listas" junto al ejecutable. Los mensajes
+del extractor y su final llegan a la GUI por la cola de eventos:
 
-    ("log", str)                         línea de salida del extractor
-    ("extract_done", categoria, código)  ha terminado (0 = completo)
+    ("log", str)                         línea del extractor
+    ("extract_done", categoria, código)  ha terminado (0 = 1000 ASINs reunidos)
 """
 from __future__ import annotations
 
-import importlib.util
-import os
+import asyncio
 import queue
-import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
-DEFAULT_DIR = Path.home() / "AmazonExtractor"
+from extractor import config as xconfig
+from extractor import crawler, runner
 
-# Se usa solo si no se encuentra extractor/config.py
-FALLBACK_CATEGORIES = {
-    "electronica_hogar": "Electrónica, TV y hogar",
-    "telefonia_movil": "Smartphones y smartwatches",
-    "audio_y_video": "Auriculares y altavoces",
-    "computacion_y_portatiles": "Portátiles, tablets e informática",
-    "fotografia_y_video": "Cámaras y vídeo",
-}
+from .config import app_dir
+
+LISTS_DIR = app_dir() / "listas"
+xconfig.DATA_DIR = LISTS_DIR
 
 
-def extractor_dir(configured: str = "") -> Path:
-    return Path(configured) if configured else DEFAULT_DIR
+def categories() -> tuple[dict[str, str], str]:
+    """{clave: nombre visible} y la clave por defecto."""
+    return ({k: xconfig.NOMBRES.get(k, k) for k in xconfig.CATEGORIAS}, xconfig.DEFAULT_CATEGORY)
 
 
-def is_installed(base: Path) -> bool:
-    return (base / "extractor_amazon.py").exists() and python_exe(base).exists()
+def csv_path(key: str) -> Path:
+    return xconfig.output_csv(key)
 
 
-def python_exe(base: Path) -> Path:
-    if sys.platform == "win32":
-        return base / ".venv" / "Scripts" / "python.exe"
-    return base / ".venv" / "bin" / "python"
-
-
-def load_categories(base: Path) -> tuple[dict[str, str], str]:
-    """{clave: nombre visible} leído de extractor/config.py, y la clave por defecto."""
-    path = base / "extractor" / "config.py"
-    try:
-        spec = importlib.util.spec_from_file_location("_extractor_config", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
-        names = getattr(module, "NOMBRES", {})
-        cats = {k: names.get(k, k) for k in module.CATEGORIAS}
-        return cats, module.DEFAULT_CATEGORY
-    except Exception:  # noqa: BLE001
-        return dict(FALLBACK_CATEGORIES), "electronica_hogar"
-
-
-def csv_path(base: Path, key: str) -> Path:
-    return base / f"amazon_top1000_{key}.csv"
-
-
-def list_age_hours(base: Path, key: str) -> float | None:
+def list_age_hours(key: str) -> float | None:
     """Horas desde que se guardó la lista de la categoría (None si no existe)."""
-    import time
-    path = csv_path(base, key)
+    path = csv_path(key)
     return (time.time() - path.stat().st_mtime) / 3600 if path.exists() else None
 
 
-def is_complete(base: Path, key: str) -> bool:
-    """CSV existente sin progreso pendiente = extracción terminada."""
-    return csv_path(base, key).exists() and not (base / f"extractor_estado_{key}.json").exists()
+def is_complete(key: str) -> bool:
+    return runner.is_complete(key)
 
 
 class ExtractRun:
-    def __init__(self, base: Path, key: str, events: "queue.Queue[tuple]"):
-        self.base, self.key, self.events = base, key, events
-        self.proc: subprocess.Popen | None = None
+    def __init__(self, key: str, events: "queue.Queue[tuple]"):
+        self.key, self.events = key, events
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task | None = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         # una lista ya completa se rehace desde cero; una a medias se reanuda
-        args = [str(python_exe(self.base)), "-u", "extractor_amazon.py", self.key]
-        if is_complete(self.base, self.key):
-            args.append("--reset")
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
-        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        self.proc = subprocess.Popen(
-            args, cwd=self.base, env=env, creationflags=flags,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace",
-        )
-        threading.Thread(target=self._pump, daemon=True).start()
+        reset = is_complete(self.key)
+        crawler.set_log_sink(lambda line: self.events.put(("log", "[lista] " + line)))
+        self._thread = threading.Thread(target=self._run, args=(reset,), name="extractor", daemon=True)
+        self._thread.start()
 
-    def _pump(self) -> None:
-        assert self.proc and self.proc.stdout
-        for line in self.proc.stdout:
-            line = line.rstrip()
-            if line:
-                self.events.put(("log", "[extractor] " + line))
-        self.events.put(("extract_done", self.key, self.proc.wait()))
+    def _run(self, reset: bool) -> None:
+        # Playwright lanza el navegador como subproceso: en Windows necesita el
+        # bucle Proactor (main.py fija el Selector por defecto para aiohttp)
+        self._loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+        code = 1
+        try:
+            self._task = self._loop.create_task(runner.run_extraction(self.key, reset))
+            code = self._loop.run_until_complete(self._task)
+        except asyncio.CancelledError:
+            code = 1
+        except Exception as exc:  # noqa: BLE001
+            self.events.put(("log", f"[lista] Error: {exc}"))
+            code = 2
+        finally:
+            self._loop.close()
+        self.events.put(("extract_done", self.key, code))
 
     @property
     def running(self) -> bool:
-        return bool(self.proc and self.proc.poll() is None)
+        return bool(self._thread and self._thread.is_alive())
 
     def cancel(self) -> None:
-        """Para el extractor y su navegador. Lo ya guardado en el CSV se conserva."""
-        if not self.running:
-            return
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
-                           creationflags=subprocess.CREATE_NO_WINDOW, capture_output=True)
-        else:
-            self.proc.terminate()
+        """Para la extracción; lo ya guardado en la lista se conserva."""
+        if self.running and self._loop and self._task:
+            self._loop.call_soon_threadsafe(self._task.cancel)

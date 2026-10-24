@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
 
 
 def app_dir() -> Path:
@@ -67,7 +67,6 @@ class Settings:
     last_asin_file: str = ""
     category: str = "electronica_hogar"  # categoría elegida para el extractor
     list_max_age_hours: float = 24.0    # al iniciar, rehace la lista si es más antigua
-    extractor_dir: str = ""             # vacío = C:\Users\<usuario>\AmazonExtractor
 
     @classmethod
     def load(cls) -> "Settings":

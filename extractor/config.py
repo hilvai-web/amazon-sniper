@@ -25,12 +25,17 @@ NOMBRES: dict[str, str] = {
 DEFAULT_CATEGORY = "electronica_hogar"
 
 
+# Carpeta donde se guardan los CSV y el progreso. La app la cambia a su carpeta
+# "listas" junto al .exe; en línea de comandos es la carpeta actual.
+DATA_DIR = Path(".")
+
+
 def output_csv(category: str) -> Path:
-    return Path(f"amazon_top{TARGET_ASINS}_{category}.csv")
+    return DATA_DIR / f"amazon_top{TARGET_ASINS}_{category}.csv"
 
 
 def state_file(category: str) -> Path:
-    return Path(f"extractor_estado_{category}.json")
+    return DATA_DIR / f"extractor_estado_{category}.json"
 
 # Solo productos de valor alto: precio visible en el ranking >= MIN_PRICE (euros)
 MIN_PRICE = 100.0
@@ -52,6 +57,10 @@ TITLE_WORDS = 10
 PAGES_PER_CATEGORY = 2                           # Amazon muestra 50 por página, máx. 100 por categoría
 
 
+# Navegador que usa Playwright, en orden de preferencia. "msedge" y "chrome" son
+# los que ya tiene instalados el PC (Edge viene con Windows), así el .exe no
+# necesita descargar ningún navegador. None = Chromium propio de Playwright.
+BROWSER_CHANNELS = ["msedge", "chrome", None]
 HEADLESS = True              # False para ver el navegador mientras trabaja
 DELAY_RANGE = (2.0, 5.0)     # espera aleatoria entre páginas (segundos)
 PAGE_TIMEOUT_MS = 45_000

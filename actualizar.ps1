@@ -1,80 +1,59 @@
-# Instala o actualiza Amazon Sniper y el extractor de ASINs desde GitHub.
+# Instala o actualiza Amazon Sniper (AmazonSniper.exe portable, no necesita Python).
 # Uso (PowerShell):  irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.ps1 | iex
-# Tu configuracion (config.json), historial (alertas.db) y CSV no se tocan.
+# Carpeta: C:\Users\<tu usuario>\AmazonSniper  (otra: antes ejecuta  $env:SNIPER_DIR = "D:\MiCarpeta")
+# Tu configuracion (config.json), historial (alertas.db) y listas no se tocan.
 & {
     $ErrorActionPreference = "Stop"
     $ProgressPreference = "SilentlyContinue"   # acelera Invoke-WebRequest en PowerShell 5
-    $repoZip = "https://codeload.github.com/hilvai-web/amazon-sniper/zip/refs/heads/main"
-    $sniper = Join-Path $HOME "AmazonSniper"
-    $extractor = Join-Path $HOME "AmazonExtractor"
+    $url = "https://github.com/hilvai-web/amazon-sniper/releases/latest/download/AmazonSniper.exe"
+    $dir = if ($env:SNIPER_DIR) { $env:SNIPER_DIR } else { Join-Path $HOME "AmazonSniper" }
+    $exe = Join-Path $dir "AmazonSniper.exe"
+    [System.IO.Directory]::CreateDirectory($dir) | Out-Null
 
-    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-        Write-Host "No se encuentra Python. Instala Python 3.12 (marca 'Add python.exe to PATH') y repite." -ForegroundColor Yellow
-        return
+    $running = Get-Process -Name "AmazonSniper" -ErrorAction SilentlyContinue
+    if ($running) {
+        Write-Host "Cerrando Amazon Sniper para actualizarlo..." -ForegroundColor Yellow
+        $running | Stop-Process -Force
+        Start-Sleep -Seconds 2
     }
 
-    # 1. Descargar la ultima version
-    Write-Host "Descargando la ultima version..." -ForegroundColor Cyan
-    $tmp = Join-Path $env:TEMP ("amazon-sniper-" + [guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path $tmp | Out-Null
-    Invoke-WebRequest -Uri $repoZip -OutFile (Join-Path $tmp "src.zip") -UseBasicParsing
-    Expand-Archive -Path (Join-Path $tmp "src.zip") -DestinationPath $tmp -Force
-    $src = Get-ChildItem $tmp -Directory | Select-Object -First 1 -ExpandProperty FullName
+    Write-Host "Descargando la ultima version de AmazonSniper.exe..." -ForegroundColor Cyan
+    $tmp = "$exe.download"
+    Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+    Move-Item -Path $tmp -Destination $exe -Force
+    Unblock-File -Path $exe -ErrorAction SilentlyContinue
+    Write-Host "Instalado en $exe" -ForegroundColor Green
 
-    # 2. Copiar codigo (solo .py y requisitos; nunca config.json, alertas.db ni CSV)
-    function Copy-Code($items, $dest) {
-        [System.IO.Directory]::CreateDirectory($dest) | Out-Null
-        foreach ($item in $items) {
-            Copy-Item -Path (Join-Path $src $item) -Destination $dest -Recurse -Force
-        }
-    }
-    Copy-Code @("main.py", "sniper", "requirements.txt") $sniper
-    Copy-Code @("extractor_amazon.py", "extractor", "requirements-extractor.txt") $extractor
-    Remove-Item (Join-Path $extractor "extraer_asins.py") -ErrorAction SilentlyContinue  # version antigua
-    Remove-Item $tmp -Recurse -Force
-    Write-Host "Codigo actualizado en $sniper y $extractor" -ForegroundColor Green
-
-    # 3. Entornos virtuales y dependencias
-    function Initialize-Venv($dir, [string[]]$packages) {
-        $py = Join-Path $dir ".venv\Scripts\python.exe"
-        if (-not (Test-Path $py)) { python -m venv (Join-Path $dir ".venv") | Out-Host }
-        & $py -m pip install --quiet --upgrade pip | Out-Host
-        & $py -m pip install --quiet @packages | Out-Host
-        return $py
-    }
-    Write-Host "Actualizando dependencias de Amazon Sniper..." -ForegroundColor Cyan
-    $null = Initialize-Venv $sniper @("customtkinter", "aiohttp", "beautifulsoup4", "lxml", "certifi")
-    Write-Host "Actualizando dependencias del extractor..." -ForegroundColor Cyan
-    $extPy = Initialize-Venv $extractor @("playwright")
-    & $extPy -m playwright install chromium
-
-    # 4. Accesos directos: menu Inicio (siempre) y Escritorio (si Windows lo permite)
+    # Accesos directos: menu Inicio (siempre) y Escritorio (si Windows lo permite)
     function New-Shortcut($lnk) {
-        $wsh = New-Object -ComObject WScript.Shell
-        $sc = $wsh.CreateShortcut($lnk)
-        $sc.TargetPath = Join-Path $sniper ".venv\Scripts\pythonw.exe"
-        $sc.Arguments = "main.py"
-        $sc.WorkingDirectory = $sniper
+        $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+        $sc.TargetPath = $exe
+        $sc.WorkingDirectory = $dir
         $sc.Description = "Amazon Sniper - detector de errores de precio"
         $sc.Save()
     }
     $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Amazon Sniper.lnk"
     New-Shortcut $startMenu
-    Write-Host "Acceso directo creado en el menu Inicio (busca 'Amazon Sniper')." -ForegroundColor Green
+    Write-Host "Acceso directo en el menu Inicio (busca 'Amazon Sniper')." -ForegroundColor Green
     $desktop = Join-Path ([Environment]::GetFolderPath("Desktop")) "Amazon Sniper.lnk"
     try {
         New-Shortcut $desktop
         if (-not (Test-Path $desktop)) { throw "bloqueado" }
-        Write-Host "Acceso directo creado en el Escritorio." -ForegroundColor Green
+        Write-Host "Acceso directo en el Escritorio." -ForegroundColor Green
     } catch {
-        Write-Host "Windows no deja crear el acceso en el Escritorio (proteccion de carpetas)." -ForegroundColor Yellow
-        Write-Host "Abriendo la carpeta del menu Inicio: arrastra 'Amazon Sniper' al Escritorio." -ForegroundColor Yellow
+        Write-Host "Windows no deja crear el acceso en el Escritorio: arrastralo desde la carpeta que se abre." -ForegroundColor Yellow
         Start-Process explorer.exe -ArgumentList "/select,`"$startMenu`""
     }
 
-    Write-Host "`nListo. Comandos utiles:" -ForegroundColor Green
-    Write-Host "  Abrir Amazon Sniper:   cd $sniper; .\.venv\Scripts\pythonw.exe main.py"
-    Write-Host "  Ver categorias:        cd $extractor; .\.venv\Scripts\python.exe extractor_amazon.py --listar"
-    Write-Host "  Extraer una categoria: cd $extractor; .\.venv\Scripts\python.exe extractor_amazon.py telefonia_movil"
-    Write-Host "  Actualizar de nuevo:   irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.ps1 | iex"
+    # La version anterior (con Python) ya no hace falta
+    $oldVenv = Join-Path $dir ".venv"
+    if (Test-Path $oldVenv) {
+        Remove-Item $oldVenv -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $dir "sniper"), (Join-Path $dir "main.py"), (Join-Path $dir "requirements.txt") -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Eliminada la instalacion antigua con Python (tus datos se conservan)." -ForegroundColor Green
+    }
+
+    Write-Host "`nListo. Abriendo Amazon Sniper..." -ForegroundColor Green
+    Start-Process -FilePath $exe -WorkingDirectory $dir
+    Write-Host "Desde ahora la propia app te avisara cuando haya una version nueva." -ForegroundColor Green
 }

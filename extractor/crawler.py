@@ -31,8 +31,19 @@ class Blocked(Exception):
     """Captcha o página de error de Amazon."""
 
 
+_log_sink = print
+
+
+def set_log_sink(fn) -> None:
+    """La app redirige aquí los mensajes del extractor a su registro."""
+    global _log_sink
+    _log_sink = fn
+
+
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    for line in str(msg).splitlines() or [""]:
+        if line.strip():
+            _log_sink(line)
 
 
 def category_url(root: str, node: str | None = None) -> str:

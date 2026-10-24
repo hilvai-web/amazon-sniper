@@ -12,12 +12,9 @@ import argparse
 import asyncio
 import sys
 
-from playwright.async_api import async_playwright
-
 from extractor import config
-from extractor.browser import BrowserSession
-from extractor.crawler import Blocked, crawl, log
-from extractor.storage import AsinStore, load_state, save_state
+from extractor.crawler import log
+from extractor.runner import run_extraction, start_url_for  # noqa: F401 (start_url_for: API)
 
 
 def print_categories() -> None:
@@ -38,44 +35,8 @@ def resolve_category(arg: str | None) -> str:
     return config.DEFAULT_CATEGORY
 
 
-def start_url_for(key: str) -> str:
-    """URL de Best Sellers con la que arranca la cola de Playwright."""
-    return config.CATEGORIAS[key]
-
-
 async def main(key: str, reset: bool) -> int:
-    start_url = start_url_for(key)
-    csv_path, state_path = config.output_csv(key), config.state_file(key)
-    log(f"Categoría: {config.NOMBRES.get(key, key)} ({key})\nURL: {start_url}\nSalida: {csv_path}")
-
-    store = AsinStore(csv_path, config.TARGET_ASINS)
-    queue, visited = ([], set()) if reset else load_state(state_path)
-    if not reset:
-        store.load()
-        if len(store):
-            log(f"Reanudando: {len(store)} ASINs ya guardados, {len(queue)} categorías pendientes")
-
-    async with async_playwright() as pw:
-        session = BrowserSession(pw)
-        await session.start()
-        try:
-            await crawl(session, store, queue, visited, start_url, state_path)
-        except Blocked as exc:
-            log(f"\nParado: {exc}. Vuelve a ejecutarlo más tarde y continuará donde lo dejó.")
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            log("\nInterrumpido por el usuario.")
-        finally:
-            store.save()
-            save_state(state_path, queue, visited)
-            await session.close()
-
-    log(f"\n{len(store)} ASINs únicos guardados en {csv_path.resolve()}")
-    if store.full:
-        state_path.unlink(missing_ok=True)
-        return 0
-    if not queue:
-        log("Aviso: no quedan subcategorías por recorrer antes de llegar al objetivo.")
-    return 1
+    return await run_extraction(key, reset)
 
 
 if __name__ == "__main__":

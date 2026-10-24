@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import queue
+import threading
 from pathlib import Path
 import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox, ttk
 
+import sys
+
 import customtkinter as ctk
 
 from .config import APP_NAME, APP_VERSION, DB_PATH, MARKETPLACES, Settings
 from .db import Database
-from . import extract_runner
+from . import extract_runner, updater
 from .engine import ScanEngine
 from .scraper import load_asins, load_proxies
 
@@ -45,7 +48,7 @@ class SniperApp(ctk.CTk):
         self._build_main()
         self._style_table()
 
-        own = extract_runner.csv_path(self.extractor_base, self.settings.category)
+        own = extract_runner.csv_path(self.settings.category)
         if self.settings.last_asin_file and Path(self.settings.last_asin_file) != own:
             self._load_asin_file(self.settings.last_asin_file, quiet=True)
             self.custom_file = bool(self.asins)
@@ -54,6 +57,7 @@ class SniperApp(ctk.CTk):
         self._refresh_db_stats()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(200, self._poll_events)
+        threading.Thread(target=self._check_update, daemon=True).start()
 
     # ================================================================ layout
     def _build_sidebar(self) -> None:
@@ -69,12 +73,17 @@ class SniperApp(ctk.CTk):
 
         ctk.CTkLabel(side, text="🎯 AMAZON SNIPER", font=ctk.CTkFont(size=24, weight="bold"),
                      text_color=ACCENT).pack(pady=(18, 2))
-        ctk.CTkLabel(side, text="Detector de errores de precio", text_color="gray70").pack(pady=(0, 14))
+        self.update_anchor = ctk.CTkLabel(side, text=f"Detector de errores de precio · v{APP_VERSION}",
+                                          text_color="gray70")
+        self.update_anchor.pack(pady=(0, 14))
+        # aparece solo cuando hay una versión nueva en GitHub
+        self.update_btn = ctk.CTkButton(side, text="", fg_color="#2e7d32", hover_color="#256628",
+                                        command=self._apply_update)
+        self._update_info: tuple[str, str] | None = None
 
         # --- ASINs
         self._section(side, "Productos")
-        self.extractor_base = extract_runner.extractor_dir(self.settings.extractor_dir)
-        self.categories, default_cat = extract_runner.load_categories(self.extractor_base)
+        self.categories, default_cat = extract_runner.categories()
         if self.settings.category not in self.categories:
             self.settings.category = default_cat
         self.extract_run: extract_runner.ExtractRun | None = None
@@ -260,7 +269,7 @@ class SniperApp(ctk.CTk):
         """Carga el CSV ya extraído de la categoría elegida, si existe."""
         key = self.settings.category
         self.custom_file = False
-        path = extract_runner.csv_path(self.extractor_base, key)
+        path = extract_runner.csv_path(key)
         if path.exists():
             self._load_asin_file(str(path), quiet=quiet)
         else:
@@ -283,18 +292,12 @@ class SniperApp(ctk.CTk):
         self._log("Extracción cancelada. Lo ya extraído queda guardado; al volver a empezar continúa.")
 
     def _begin_extract(self) -> bool:
-        if not extract_runner.is_installed(self.extractor_base):
-            messagebox.showwarning(APP_NAME, (
-                f"No encuentro el extractor en {self.extractor_base}.\n\n"
-                "Instálalo ejecutando en PowerShell el comando de actualización:\n"
-                "irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.ps1 | iex"))
-            return False
         key = self._category_key()
-        self.extract_run = extract_runner.ExtractRun(self.extractor_base, key, self.events)
+        self.extract_run = extract_runner.ExtractRun(key, self.events)
         try:
             self.extract_run.start()
-        except OSError as exc:
-            messagebox.showerror(APP_NAME, f"No se pudo lanzar el extractor:\n{exc}")
+        except RuntimeError as exc:
+            messagebox.showerror(APP_NAME, f"No se pudo lanzar la búsqueda de productos:\n{exc}")
             return False
         self._log(f"Buscando los 1000 productos más vendidos de {self.categories[key]} (tarda unos minutos)…")
         self.extract_btn.configure(text="✖ Cancelar extracción", fg_color=DANGER, hover_color=DANGER_HOVER)
@@ -305,7 +308,7 @@ class SniperApp(ctk.CTk):
         self.extract_btn.configure(text="⬇ Extraer Top 1000 de esta categoría",
                                    fg_color=("#3a7ebf", "#1f538d"), hover_color=("#325882", "#14375e"))
         self.category_menu.configure(state="normal")
-        path = extract_runner.csv_path(self.extractor_base, key)
+        path = extract_runner.csv_path(key)
         if path.exists():
             self._load_asin_file(str(path))
         self.custom_file = False
@@ -320,6 +323,54 @@ class SniperApp(ctk.CTk):
                 self._start_scan()
             else:
                 self._reset_buttons("No se pudo obtener la lista de productos")
+
+    # ------------------------------------------------------ actualización
+    def _check_update(self) -> None:
+        latest = updater.check_latest()
+        if latest and updater.is_newer(latest[0], APP_VERSION):
+            self.events.put(("update_available", *latest))
+
+    def _show_update(self, version: str, url: str) -> None:
+        self._update_info = (version, url)
+        self.update_btn.configure(text=f"⬆ Actualizar a {version}")
+        self.update_btn.pack(fill="x", padx=16, pady=(0, 10), after=self.update_anchor)
+        self._log(f"Hay una versión nueva disponible: {version} (tienes v{APP_VERSION}).")
+
+    def _apply_update(self) -> None:
+        if not self._update_info:
+            return
+        version, url = self._update_info
+        if not updater.is_frozen():
+            webbrowser.open(updater.RELEASES_PAGE)
+            return
+        if (self.engine and self.engine.running) or (self.extract_run and self.extract_run.running):
+            messagebox.showinfo(APP_NAME, "Detén el escaneo antes de actualizar.")
+            return
+        if not messagebox.askyesno(APP_NAME, f"¿Descargar {version} y reiniciar Amazon Sniper?\n"
+                                             "Tu configuración e historial se conservan."):
+            return
+        self.update_btn.configure(state="disabled", text="Descargando…")
+        new_exe = Path(sys.executable).resolve().with_name("AmazonSniper.new.exe")
+
+        def work() -> None:
+            try:
+                updater.download(url, new_exe,
+                                 lambda pct: self.events.put(("log", f"Descargando actualización… {pct}%"))
+                                 if pct % 20 == 0 else None)
+                self.events.put(("update_ready", str(new_exe)))
+            except OSError as exc:
+                self.events.put(("log", f"No se pudo descargar la actualización: {exc}"))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _finish_update(self, new_exe: str) -> None:
+        try:
+            updater.install_and_restart(Path(new_exe))
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"No se pudo instalar la actualización:\n{exc}\n\n"
+                                           "Mueve la app a una carpeta que no sea el Escritorio.")
+            return
+        self._on_close()
 
     def _pick_proxy_file(self) -> None:
         path = filedialog.askopenfilename(title="Lista de proxies (host:puerto por línea)",
@@ -369,9 +420,9 @@ class SniperApp(ctk.CTk):
             return
         if not self.custom_file:
             key = self._category_key()
-            age = extract_runner.list_age_hours(self.extractor_base, key)
+            age = extract_runner.list_age_hours(key)
             fresh = (age is not None and age < self.settings.list_max_age_hours
-                     and extract_runner.is_complete(self.extractor_base, key))
+                     and extract_runner.is_complete(key))
             if not fresh:
                 self._scan_after_extract = True
                 if self._begin_extract():
@@ -466,6 +517,10 @@ class SniperApp(ctk.CTk):
                     self._on_finished(event[1])
                 elif kind == "extract_done":
                     self._on_extract_done(event[1], event[2])
+                elif kind == "update_available":
+                    self._show_update(event[1], event[2])
+                elif kind == "update_ready":
+                    self._finish_update(event[1])
         except queue.Empty:
             pass
         self.after(150 if handled else 300, self._poll_events)
