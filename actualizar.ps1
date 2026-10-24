@@ -48,6 +48,30 @@
     $extPy = Initialize-Venv $extractor @("playwright")
     & $extPy -m playwright install chromium
 
+    # 4. Accesos directos: menu Inicio (siempre) y Escritorio (si Windows lo permite)
+    function New-Shortcut($lnk) {
+        $wsh = New-Object -ComObject WScript.Shell
+        $sc = $wsh.CreateShortcut($lnk)
+        $sc.TargetPath = Join-Path $sniper ".venv\Scripts\pythonw.exe"
+        $sc.Arguments = "main.py"
+        $sc.WorkingDirectory = $sniper
+        $sc.Description = "Amazon Sniper - detector de errores de precio"
+        $sc.Save()
+    }
+    $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Amazon Sniper.lnk"
+    New-Shortcut $startMenu
+    Write-Host "Acceso directo creado en el menu Inicio (busca 'Amazon Sniper')." -ForegroundColor Green
+    $desktop = Join-Path ([Environment]::GetFolderPath("Desktop")) "Amazon Sniper.lnk"
+    try {
+        New-Shortcut $desktop
+        if (-not (Test-Path $desktop)) { throw "bloqueado" }
+        Write-Host "Acceso directo creado en el Escritorio." -ForegroundColor Green
+    } catch {
+        Write-Host "Windows no deja crear el acceso en el Escritorio (proteccion de carpetas)." -ForegroundColor Yellow
+        Write-Host "Abriendo la carpeta del menu Inicio: arrastra 'Amazon Sniper' al Escritorio." -ForegroundColor Yellow
+        Start-Process explorer.exe -ArgumentList "/select,`"$startMenu`""
+    }
+
     Write-Host "`nListo. Comandos utiles:" -ForegroundColor Green
     Write-Host "  Abrir Amazon Sniper:   cd $sniper; .\.venv\Scripts\pythonw.exe main.py"
     Write-Host "  Ver categorias:        cd $extractor; .\.venv\Scripts\python.exe extractor_amazon.py --listar"
