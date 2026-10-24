@@ -1,0 +1,11 @@
+__pycache__/
+.pytest_cache/
+.venv/
+build/
+dist/
+*.spec
+alertas.db*
+config.json
+sniper.log
+*.csv
+extractor_estado*.json

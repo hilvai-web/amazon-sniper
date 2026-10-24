@@ -1,0 +1,3 @@
+# Opcional. Un proxy por linea (HTTP/HTTPS). Usa solo proxies que controles o hayas contratado.
+# 192.168.1.50:3128
+# http://usuario:clave@proxy.ejemplo.com:8080
