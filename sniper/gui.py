@@ -10,6 +10,7 @@ import customtkinter as ctk
 
 from .config import APP_NAME, APP_VERSION, DB_PATH, MARKETPLACES, Settings
 from .db import Database
+from . import extract_runner
 from .engine import ScanEngine
 from .scraper import load_asins, load_proxies
 
@@ -45,6 +46,8 @@ class SniperApp(ctk.CTk):
 
         if self.settings.last_asin_file:
             self._load_asin_file(self.settings.last_asin_file, quiet=True)
+        else:
+            self._load_category_list(quiet=True)
         self._refresh_db_stats()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(200, self._poll_events)
@@ -67,7 +70,22 @@ class SniperApp(ctk.CTk):
 
         # --- ASINs
         self._section(side, "Productos")
-        ctk.CTkButton(side, text="📂 Cargar ASINs (.txt / .csv)", command=self._pick_asin_file).pack(fill="x", padx=16, pady=4)
+        self.extractor_base = extract_runner.extractor_dir(self.settings.extractor_dir)
+        self.categories, default_cat = extract_runner.load_categories(self.extractor_base)
+        if self.settings.category not in self.categories:
+            self.settings.category = default_cat
+        self.extract_run: extract_runner.ExtractRun | None = None
+        ctk.CTkLabel(side, text="Categoría", anchor="w", text_color="gray80").pack(fill="x", padx=16, pady=(4, 0))
+        self.category_menu = ctk.CTkOptionMenu(
+            side, values=list(self.categories.values()), command=self._on_category,
+            fg_color="gray25", button_color="gray30", button_hover_color="gray35")
+        self.category_menu.set(self.categories[self.settings.category])
+        self.category_menu.pack(fill="x", padx=16, pady=(0, 4))
+        self.extract_btn = ctk.CTkButton(side, text="⬇ Extraer Top 1000 de esta categoría",
+                                         command=self._toggle_extract)
+        self.extract_btn.pack(fill="x", padx=16, pady=4)
+        ctk.CTkButton(side, text="📂 Cargar otro archivo (.txt / .csv)", fg_color="gray25", hover_color="gray30",
+                      command=self._pick_asin_file).pack(fill="x", padx=16, pady=4)
         self.asin_label = ctk.CTkLabel(side, text="Ningún archivo cargado", text_color="gray70", wraplength=280)
         self.asin_label.pack(padx=16, pady=(0, 6))
 
@@ -222,6 +240,62 @@ class SniperApp(ctk.CTk):
         self.asin_label.configure(text=f"{name}: {len(self.asins):,} ASINs únicos".replace(",", "."))
         self._log(f"Cargados {len(self.asins)} ASINs desde {name}")
 
+    # ------------------------------------------------------- categorías
+    def _category_key(self) -> str:
+        name = self.category_menu.get()
+        return next((k for k, v in self.categories.items() if v == name), self.settings.category)
+
+    def _on_category(self, _name: str) -> None:
+        self.settings.category = self._category_key()
+        self.settings.save()
+        self._load_category_list()
+
+    def _load_category_list(self, quiet: bool = False) -> None:
+        """Carga el CSV ya extraído de la categoría elegida, si existe."""
+        key = self.settings.category
+        path = extract_runner.csv_path(self.extractor_base, key)
+        if path.exists():
+            self._load_asin_file(str(path), quiet=quiet)
+        else:
+            self.asins = []
+            self.settings.last_asin_file = ""
+            self.asin_label.configure(text=f"Sin lista de {self.categories[key]}: pulsa Extraer")
+
+    def _toggle_extract(self) -> None:
+        if self.extract_run and self.extract_run.running:
+            self.extract_run.cancel()
+            self._log("Extracción cancelada. Lo ya extraído queda guardado; al volver a pulsar continúa.")
+            return
+        if not extract_runner.is_installed(self.extractor_base):
+            messagebox.showwarning(APP_NAME, (
+                f"No encuentro el extractor en {self.extractor_base}.\n\n"
+                "Instálalo ejecutando en PowerShell el comando de actualización:\n"
+                "irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.ps1 | iex"))
+            return
+        key = self._category_key()
+        self.extract_run = extract_runner.ExtractRun(self.extractor_base, key, self.events)
+        try:
+            self.extract_run.start()
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"No se pudo lanzar el extractor:\n{exc}")
+            return
+        self._log(f"Extrayendo Top 1000 de {self.categories[key]} (tarda unos minutos)…")
+        self.extract_btn.configure(text="✖ Cancelar extracción", fg_color=DANGER, hover_color=DANGER_HOVER)
+        self.category_menu.configure(state="disabled")
+
+    def _on_extract_done(self, key: str, code: int) -> None:
+        self.extract_btn.configure(text="⬇ Extraer Top 1000 de esta categoría",
+                                   fg_color=("#3a7ebf", "#1f538d"), hover_color=("#325882", "#14375e"))
+        self.category_menu.configure(state="normal")
+        path = extract_runner.csv_path(self.extractor_base, key)
+        if path.exists():
+            self._load_asin_file(str(path))
+        if code == 0:
+            self._log(f"✅ Lista de {self.categories[key]} lista y cargada.")
+        else:
+            self._log(f"La extracción de {self.categories[key]} no llegó a 1000 (código {code}); "
+                      "se ha cargado lo obtenido. Vuelve a pulsar Extraer para continuar.")
+
     def _pick_proxy_file(self) -> None:
         path = filedialog.askopenfilename(title="Lista de proxies (host:puerto por línea)",
                                           filetypes=[("Texto", "*.txt"), ("Todos", "*.*")])
@@ -337,6 +411,8 @@ class SniperApp(ctk.CTk):
                     self.progress.set(done / total if total else 0)
                 elif kind == "finished":
                     self._on_finished(event[1])
+                elif kind == "extract_done":
+                    self._on_extract_done(event[1], event[2])
         except queue.Empty:
             pass
         self.after(150 if handled else 300, self._poll_events)
@@ -398,6 +474,8 @@ class SniperApp(ctk.CTk):
     def _on_close(self) -> None:
         if self.engine and self.engine.running:
             self.engine.stop()
+        if self.extract_run and self.extract_run.running:
+            self.extract_run.cancel()
         self._read_settings_silent()
         self.after(300, self._shutdown)
 

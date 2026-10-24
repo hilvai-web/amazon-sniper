@@ -65,6 +65,8 @@ class Settings:
     min_value: float = 100.0            # solo productos cuyo precio normal sea >= esto
     exclude_keywords: str = DEFAULT_EXCLUDE
     last_asin_file: str = ""
+    category: str = "electronica_hogar"  # categoría elegida para el extractor
+    extractor_dir: str = ""             # vacío = C:\Users\<usuario>\AmazonExtractor
 
     @classmethod
     def load(cls) -> "Settings":

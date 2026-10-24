@@ -45,7 +45,7 @@ irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.p
 ## Uso
 
 1. Ejecuta `AmazonSniper.exe` (o `python main.py` en desarrollo).
-2. **Cargar ASINs**: un `.txt` con un ASIN por línea; también acepta URLs o texto mezclado.
+2. **Elige la categoría** en el desplegable (Electrónica, Móviles, TV, Audio, Informática...) y pulsa **Extraer Top 1000 de esta categoría**: la app lanza el extractor y carga la lista al terminar. Si ya la extrajiste antes, se carga sola al elegirla. También puedes **cargar otro archivo** `.txt`/`.csv` con tus ASINs.
 3. Pon el **token del bot** (créalo con @BotFather) y tu **Chat ID** (te lo da @userinfobot). Pulsa *Probar Telegram*.
 4. Ajusta descuento, precio máximo y marketplaces, y pulsa **INICIAR SNIPER**.
 5. Doble clic en una fila abre el producto. *Solo errores* filtra la tabla.
