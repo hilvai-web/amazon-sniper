@@ -45,7 +45,7 @@ irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.p
 ## Uso
 
 1. Ejecuta `AmazonSniper.exe` (o `python main.py` en desarrollo).
-2. **Elige la categoría** en el desplegable (Electrónica, Móviles, TV, Audio, Informática...) y pulsa **Extraer Top 1000 de esta categoría**: la app lanza el extractor y carga la lista al terminar. Si ya la extrajiste antes, se carga sola al elegirla. También puedes **cargar otro archivo** `.txt`/`.csv` con tus ASINs.
+2. **Elige la categoría** en el desplegable (Electrónica, TV y hogar · Smartphones · Auriculares y altavoces · Portátiles y tablets · Cámaras y vídeo). Al pulsar **INICIAR SNIPER** la app busca sola los 1000 productos más vendidos de esa categoría (si su lista tiene más de 24 h) y empieza a vigilarlos; no hace falta cargar ningún archivo. Si quieres usar tu propia lista, *Cargar otro archivo* sigue disponible.
 3. Pon el **token del bot** (créalo con @BotFather) y tu **Chat ID** (te lo da @userinfobot). Pulsa *Probar Telegram*.
 4. Ajusta descuento, precio máximo y marketplaces, y pulsa **INICIAR SNIPER**.
 5. Doble clic en una fila abre el producto. *Solo errores* filtra la tabla.
@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File .\instalar_extractor.ps1 -Reset   # emp
 
 La primera vez crea un entorno `.venv` y descarga Chromium (~150 MB). Sale `amazon_top1000_<categoria>.csv` con la columna `ASIN`, que se carga directamente en Amazon Sniper con *Cargar ASINs*.
 
-La categoría se pasa como argumento (ver `CATEGORIAS` en `extractor/config.py`):
+La categoría se pasa como argumento. `CATEGORIAS` en `extractor/config.py` asigna a cada clave la URL de Best Sellers de amazon.es donde empieza:
 
 ```powershell
 .\.venv\Scripts\python.exe extractor_amazon.py telefonia_movil      # -> amazon_top1000_telefonia_movil.csv

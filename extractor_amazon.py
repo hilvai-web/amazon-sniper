@@ -22,9 +22,9 @@ from extractor.storage import AsinStore, load_state, save_state
 
 def print_categories() -> None:
     log("Categorías disponibles:")
-    for key, cat in config.CATEGORIAS.items():
+    for key, url in config.CATEGORIAS.items():
         mark = "  (por defecto)" if key == config.DEFAULT_CATEGORY else ""
-        log(f"  {key:<28} {cat['nombre']}{mark}")
+        log(f"  {key:<26} {config.NOMBRES.get(key, key)}{mark}\n  {'':<26} {url}")
 
 
 def resolve_category(arg: str | None) -> str:
@@ -38,10 +38,15 @@ def resolve_category(arg: str | None) -> str:
     return config.DEFAULT_CATEGORY
 
 
+def start_url_for(key: str) -> str:
+    """URL de Best Sellers con la que arranca la cola de Playwright."""
+    return config.CATEGORIAS[key]
+
+
 async def main(key: str, reset: bool) -> int:
-    category = config.CATEGORIAS[key]
+    start_url = start_url_for(key)
     csv_path, state_path = config.output_csv(key), config.state_file(key)
-    log(f"Categoría: {category['nombre']} ({key}) -> {csv_path}")
+    log(f"Categoría: {config.NOMBRES.get(key, key)} ({key})\nURL: {start_url}\nSalida: {csv_path}")
 
     store = AsinStore(csv_path, config.TARGET_ASINS)
     queue, visited = ([], set()) if reset else load_state(state_path)
@@ -54,7 +59,7 @@ async def main(key: str, reset: bool) -> int:
         session = BrowserSession(pw)
         await session.start()
         try:
-            await crawl(session, store, queue, visited, category, state_path)
+            await crawl(session, store, queue, visited, start_url, state_path)
         except Blocked as exc:
             log(f"\nParado: {exc}. Vuelve a ejecutarlo más tarde y continuará donde lo dejó.")
         except (KeyboardInterrupt, asyncio.CancelledError):

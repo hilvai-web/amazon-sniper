@@ -170,30 +170,21 @@ async def fetch_with_retries(session: BrowserSession, url: str) -> tuple[list[di
     return None
 
 
-async def find_start(session: BrowserSession, category: dict) -> str:
-    """URL de arranque: el departamento, o la subcategoría cuyo nombre contenga
-    category['sub'] (se busca en el menú lateral del departamento)."""
-    root_url = category_url(category["ruta"])
-    wanted = category.get("sub")
-    if not wanted:
-        return root_url
-    result = await fetch_with_retries(session, root_url)
-    if result:
-        pattern = subcat_pattern(category["ruta"])
-        for link in result[1]:
-            m = pattern.search(link["href"])
-            if m and normalize(wanted) in normalize(link.get("text", "")):
-                log(f"Subcategoría encontrada: {link['text'].strip()}")
-                return category_url(category["ruta"], m.group(1))
-    log(f"Aviso: no encuentro la subcategoría '{wanted}'; uso el departamento completo.")
-    return root_url
+def department_root(url: str) -> str:
+    """'https://www.amazon.es/gp/bestsellers/electronics/664660031' -> '/gp/bestsellers/electronics'.
+    Las subcategorías que se siguen son las de ese mismo departamento."""
+    m = re.search(r"(/gp/bestsellers/[^/?#]+)", url)
+    if not m:
+        raise ValueError(f"URL de Best Sellers no válida: {url}")
+    return m.group(1)
 
 
 async def crawl(session: BrowserSession, store: AsinStore, queue: list[str],
-                visited: set[str], category: dict, state_path) -> None:
-    root = category["ruta"]
+                visited: set[str], start_url: str, state_path) -> None:
+    """Recorre desde start_url (la URL de la categoría elegida) y sus subcategorías."""
+    root = department_root(start_url)
     if not queue and not visited:
-        queue.append(await find_start(session, category))
+        queue.append(start_url.split("?")[0].rstrip("/"))
     fails = 0
     while queue and not store.full:
         cat = queue.pop(0)

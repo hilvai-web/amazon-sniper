@@ -5,20 +5,22 @@ BASE_URL = "https://www.amazon.es"
 TARGET_ASINS = 1000          # se detiene al llegar exactamente a esta cifra
 
 # Categorías que acepta la línea de comandos: python extractor_amazon.py <clave>
-#   ruta: departamento de Best Sellers en amazon.es
-#   sub:  (opcional) texto de la subcategoría que se busca dentro del departamento
-#         al arrancar; si Amazon le cambia el nombre, se usa el departamento entero
-CATEGORIAS: dict[str, dict] = {
-    "electronica_hogar": {"nombre": "Electrónica", "ruta": "/gp/bestsellers/electronics"},
-    "telefonia_movil":   {"nombre": "Móviles y telefonía", "ruta": "/gp/bestsellers/electronics", "sub": "movil"},
-    "audio_hifi":        {"nombre": "Audio y Hi-Fi", "ruta": "/gp/bestsellers/electronics", "sub": "audio"},
-    "fotografia":        {"nombre": "Fotografía y videocámaras", "ruta": "/gp/bestsellers/electronics", "sub": "fotografia"},
-    "tv_video":          {"nombre": "TV, vídeo y home cinema", "ruta": "/gp/bestsellers/electronics", "sub": "tv"},
-    "wearables":         {"nombre": "Wearables y relojes inteligentes", "ruta": "/gp/bestsellers/electronics", "sub": "wearable"},
-    "informatica":       {"nombre": "Informática", "ruta": "/gp/bestsellers/computers"},
-    "videojuegos":       {"nombre": "Videojuegos", "ruta": "/gp/bestsellers/videogames"},
-    "grandes_electrodomesticos": {"nombre": "Grandes electrodomésticos", "ruta": "/gp/bestsellers/appliances"},
-    "hogar_cocina":      {"nombre": "Hogar y cocina", "ruta": "/gp/bestsellers/kitchen"},
+# Cada clave apunta al listado de Best Sellers de amazon.es donde empieza la
+# extracción; desde ahí se recorren sus subcategorías hasta reunir 1000 ASINs.
+CATEGORIAS: dict[str, str] = {
+    "electronica_hogar": "https://www.amazon.es/gp/bestsellers/electronics",               # TV, Home Cinema y Hogar
+    "telefonia_movil": "https://www.amazon.es/gp/bestsellers/electronics/17425698031",     # Smartphones y Smartwatches
+    "audio_y_video": "https://www.amazon.es/gp/bestsellers/electronics/665477031",         # Auriculares y Altavoces
+    "computacion_y_portatiles": "https://www.amazon.es/gp/bestsellers/computers",          # Laptops y Tablets
+    "fotografia_y_video": "https://www.amazon.es/gp/bestsellers/electronics/664660031",    # Cámaras y Vídeo profesional
+}
+# Nombre que se muestra en la app y en los mensajes
+NOMBRES: dict[str, str] = {
+    "electronica_hogar": "Electrónica, TV y hogar",
+    "telefonia_movil": "Smartphones y smartwatches",
+    "audio_y_video": "Auriculares y altavoces",
+    "computacion_y_portatiles": "Portátiles, tablets e informática",
+    "fotografia_y_video": "Cámaras y vídeo",
 }
 DEFAULT_CATEGORY = "electronica_hogar"
 

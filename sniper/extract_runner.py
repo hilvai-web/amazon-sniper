@@ -20,11 +20,11 @@ DEFAULT_DIR = Path.home() / "AmazonExtractor"
 
 # Se usa solo si no se encuentra extractor/config.py
 FALLBACK_CATEGORIES = {
-    "electronica_hogar": "Electrónica",
-    "telefonia_movil": "Móviles y telefonía",
-    "tv_video": "TV, vídeo y home cinema",
-    "audio_hifi": "Audio y Hi-Fi",
-    "informatica": "Informática",
+    "electronica_hogar": "Electrónica, TV y hogar",
+    "telefonia_movil": "Smartphones y smartwatches",
+    "audio_y_video": "Auriculares y altavoces",
+    "computacion_y_portatiles": "Portátiles, tablets e informática",
+    "fotografia_y_video": "Cámaras y vídeo",
 }
 
 
@@ -49,7 +49,8 @@ def load_categories(base: Path) -> tuple[dict[str, str], str]:
         spec = importlib.util.spec_from_file_location("_extractor_config", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)  # type: ignore[union-attr]
-        cats = {k: v["nombre"] for k, v in module.CATEGORIAS.items()}
+        names = getattr(module, "NOMBRES", {})
+        cats = {k: names.get(k, k) for k in module.CATEGORIAS}
         return cats, module.DEFAULT_CATEGORY
     except Exception:  # noqa: BLE001
         return dict(FALLBACK_CATEGORIES), "electronica_hogar"
@@ -57,6 +58,13 @@ def load_categories(base: Path) -> tuple[dict[str, str], str]:
 
 def csv_path(base: Path, key: str) -> Path:
     return base / f"amazon_top1000_{key}.csv"
+
+
+def list_age_hours(base: Path, key: str) -> float | None:
+    """Horas desde que se guardó la lista de la categoría (None si no existe)."""
+    import time
+    path = csv_path(base, key)
+    return (time.time() - path.stat().st_mtime) / 3600 if path.exists() else None
 
 
 def is_complete(base: Path, key: str) -> bool:

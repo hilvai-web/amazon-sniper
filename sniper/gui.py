@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+from pathlib import Path
 import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox, ttk
@@ -44,8 +45,10 @@ class SniperApp(ctk.CTk):
         self._build_main()
         self._style_table()
 
-        if self.settings.last_asin_file:
+        own = extract_runner.csv_path(self.extractor_base, self.settings.category)
+        if self.settings.last_asin_file and Path(self.settings.last_asin_file) != own:
             self._load_asin_file(self.settings.last_asin_file, quiet=True)
+            self.custom_file = bool(self.asins)
         else:
             self._load_category_list(quiet=True)
         self._refresh_db_stats()
@@ -75,6 +78,8 @@ class SniperApp(ctk.CTk):
         if self.settings.category not in self.categories:
             self.settings.category = default_cat
         self.extract_run: extract_runner.ExtractRun | None = None
+        self.custom_file = False          # True si el usuario cargó su propio archivo
+        self._scan_after_extract = False  # INICIAR pidió extraer antes de escanear
         ctk.CTkLabel(side, text="Categoría", anchor="w", text_color="gray80").pack(fill="x", padx=16, pady=(4, 0))
         self.category_menu = ctk.CTkOptionMenu(
             side, values=list(self.categories.values()), command=self._on_category,
@@ -227,6 +232,7 @@ class SniperApp(ctk.CTk):
                                           filetypes=[("ASINs", "*.txt *.csv"), ("Todos", "*.*")])
         if path:
             self._load_asin_file(path)
+            self.custom_file = True
 
     def _load_asin_file(self, path: str, quiet: bool = False) -> None:
         try:
@@ -253,35 +259,47 @@ class SniperApp(ctk.CTk):
     def _load_category_list(self, quiet: bool = False) -> None:
         """Carga el CSV ya extraído de la categoría elegida, si existe."""
         key = self.settings.category
+        self.custom_file = False
         path = extract_runner.csv_path(self.extractor_base, key)
         if path.exists():
             self._load_asin_file(str(path), quiet=quiet)
         else:
             self.asins = []
             self.settings.last_asin_file = ""
-            self.asin_label.configure(text=f"Sin lista de {self.categories[key]}: pulsa Extraer")
+            self.asin_label.configure(text=f"{self.categories[key]}: la lista se creará al pulsar INICIAR")
 
     def _toggle_extract(self) -> None:
         if self.extract_run and self.extract_run.running:
-            self.extract_run.cancel()
-            self._log("Extracción cancelada. Lo ya extraído queda guardado; al volver a pulsar continúa.")
+            self._cancel_extract()
             return
+        self._begin_extract()
+
+    def _cancel_extract(self) -> None:
+        if self._scan_after_extract:
+            self._reset_buttons("Detenido")
+        self._scan_after_extract = False
+        if self.extract_run:
+            self.extract_run.cancel()
+        self._log("Extracción cancelada. Lo ya extraído queda guardado; al volver a empezar continúa.")
+
+    def _begin_extract(self) -> bool:
         if not extract_runner.is_installed(self.extractor_base):
             messagebox.showwarning(APP_NAME, (
                 f"No encuentro el extractor en {self.extractor_base}.\n\n"
                 "Instálalo ejecutando en PowerShell el comando de actualización:\n"
                 "irm https://raw.githubusercontent.com/hilvai-web/amazon-sniper/main/actualizar.ps1 | iex"))
-            return
+            return False
         key = self._category_key()
         self.extract_run = extract_runner.ExtractRun(self.extractor_base, key, self.events)
         try:
             self.extract_run.start()
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"No se pudo lanzar el extractor:\n{exc}")
-            return
-        self._log(f"Extrayendo Top 1000 de {self.categories[key]} (tarda unos minutos)…")
+            return False
+        self._log(f"Buscando los 1000 productos más vendidos de {self.categories[key]} (tarda unos minutos)…")
         self.extract_btn.configure(text="✖ Cancelar extracción", fg_color=DANGER, hover_color=DANGER_HOVER)
         self.category_menu.configure(state="disabled")
+        return True
 
     def _on_extract_done(self, key: str, code: int) -> None:
         self.extract_btn.configure(text="⬇ Extraer Top 1000 de esta categoría",
@@ -290,11 +308,18 @@ class SniperApp(ctk.CTk):
         path = extract_runner.csv_path(self.extractor_base, key)
         if path.exists():
             self._load_asin_file(str(path))
+        self.custom_file = False
         if code == 0:
             self._log(f"✅ Lista de {self.categories[key]} lista y cargada.")
         else:
             self._log(f"La extracción de {self.categories[key]} no llegó a 1000 (código {code}); "
-                      "se ha cargado lo obtenido. Vuelve a pulsar Extraer para continuar.")
+                      "se usa lo obtenido.")
+        if self._scan_after_extract:
+            self._scan_after_extract = False
+            if self.asins:
+                self._start_scan()
+            else:
+                self._reset_buttons("No se pudo obtener la lista de productos")
 
     def _pick_proxy_file(self) -> None:
         path = filedialog.askopenfilename(title="Lista de proxies (host:puerto por línea)",
@@ -337,12 +362,31 @@ class SniperApp(ctk.CTk):
         return True
 
     def _start(self) -> None:
-        if self.engine and self.engine.running:
-            return
-        if not self.asins:
-            messagebox.showwarning(APP_NAME, "Carga primero un archivo .txt con ASINs.")
+        """INICIAR: si hace falta, primero saca la lista de la categoría y luego escanea."""
+        if (self.engine and self.engine.running) or (self.extract_run and self.extract_run.running):
             return
         if not self._read_settings():
+            return
+        if not self.custom_file:
+            key = self._category_key()
+            age = extract_runner.list_age_hours(self.extractor_base, key)
+            fresh = (age is not None and age < self.settings.list_max_age_hours
+                     and extract_runner.is_complete(self.extractor_base, key))
+            if not fresh:
+                self._scan_after_extract = True
+                if self._begin_extract():
+                    self.start_btn.configure(state="disabled", text="⏳ BUSCANDO PRODUCTOS...")
+                    self.stop_btn.configure(state="normal")
+                    self.status_label.configure(text="Preparando lista…")
+                else:
+                    self._scan_after_extract = False
+                return
+            self._load_category_list(quiet=True)
+        self._start_scan()
+
+    def _start_scan(self) -> None:
+        if not self.asins:
+            messagebox.showwarning(APP_NAME, "No hay productos que vigilar.")
             return
         if not self.settings.telegram_token:
             self._log("Aviso: Telegram sin configurar, las alertas solo se verán en la tabla.")
@@ -359,7 +403,16 @@ class SniperApp(ctk.CTk):
         self.stop_btn.configure(state="normal")
         self.status_label.configure(text="Escaneando…")
 
+    def _reset_buttons(self, status: str) -> None:
+        self.status_label.configure(text=status)
+        self.start_btn.configure(state="normal", text="▶  INICIAR SNIPER")
+        self.stop_btn.configure(state="disabled")
+
     def _stop(self) -> None:
+        if self.extract_run and self.extract_run.running:
+            self._cancel_extract()
+            self._reset_buttons("Detenido")
+            return
         if self.engine:
             self.engine.stop()
             self.status_label.configure(text="Deteniendo…")

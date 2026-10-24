@@ -66,6 +66,7 @@ class Settings:
     exclude_keywords: str = DEFAULT_EXCLUDE
     last_asin_file: str = ""
     category: str = "electronica_hogar"  # categoría elegida para el extractor
+    list_max_age_hours: float = 24.0    # al iniciar, rehace la lista si es más antigua
     extractor_dir: str = ""             # vacío = C:\Users\<usuario>\AmazonExtractor
 
     @classmethod
