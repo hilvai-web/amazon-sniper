@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 
 
 def app_dir() -> Path:
@@ -71,6 +71,10 @@ class Settings:
     continuous: bool = True             # al terminar un ciclo, empieza otro
     cycle_pause_seconds: float = 60.0   # pausa entre ciclos
     proxy_max_seconds: float = 8.0      # proxy más lento que esto = descartado
+    api_client_id: str = ""             # Creators API (Amazon Afiliados), opcional
+    api_client_secret: str = ""
+    api_partner_tag: str = ""           # ID de afiliado de amazon.es (xxxx-21)
+    api_interval: float = 1.1           # segundos entre peticiones a la API
     settings_version: int = 2
     lists_version: int = 2              # sube cuando cambia cómo se extraen las listas
 

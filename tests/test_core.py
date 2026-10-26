@@ -258,3 +258,67 @@ def test_prime_detection():
     only_others = parse_product('<span id="productTitle">TV</span><div id="buybox-see-all-buying-choices">'
                                 'desde 389,90 € <i class="a-icon-prime"></i></div>', "B0X", "ES", "u")
     assert only_others.price == 389.9 and not only_others.prime
+
+
+def test_api_parse_item():
+    from sniper.amazon_api import parse_item
+    item = {"asin": "B0API00001", "itemInfo": {"title": {"displayValue": "Samsung Smart TV 55"}},
+            "offersV2": {"listings": [
+                {"condition": {"value": "Used"}, "price": {"money": {"amount": 100.0}}},
+                {"condition": {"value": "New"}, "isBuyBoxWinner": True,
+                 "availability": {"type": "IN_STOCK"}, "merchantInfo": {"name": "Amazon.es"},
+                 "price": {"money": {"amount": 449.0},
+                           "savingBasis": {"money": {"amount": 699.0}, "savingBasisType": "LIST_PRICE"}}}]}}
+    info = parse_item(item, "ES")
+    assert (info.price, info.list_price, info.prime, info.available, info.source) == (449.0, 699.0, True, True, "api")
+    other = parse_item({"ASIN": "B0API00002", "OffersV2": {"Listings": [
+        {"IsBuyBoxWinner": True, "MerchantInfo": {"Name": "TiendaX"},
+         "Availability": {"Type": "OUT_OF_STOCK"}, "Price": {"Money": {"Amount": 50}}}]}}, "ES")
+    assert (other.asin, other.price, other.prime, other.available) == ("B0API00002", 50.0, False, False)
+    assert parse_item({"asin": "B0API00003"}, "ES").status == "no_price"
+
+
+def test_engine_shares_queue_with_api(tmp_path):
+    from sniper.amazon_api import parse_item
+
+    def listing(price, lp, seller):
+        return {"isBuyBoxWinner": True, "merchantInfo": {"name": seller},
+                "price": {"money": {"amount": price}, "savingBasis": {"money": {"amount": lp}}}}
+
+    api_items = {
+        "B0APIAMZ01": listing(180.0, 199.0, "Amazon.es"),     # normal, vendido por Amazon
+        "B0APIDEAL1": listing(15.0, 199.0, "Amazon.es"),      # error, Prime seguro -> alerta directa
+        "B0APIEXT01": listing(20.0, 199.0, "TiendaX"),        # posible error de otro vendedor -> web
+    }
+    web_urls = []
+
+    class FakeApi:
+        async def get_items(self, session, asins, market):
+            return {a: parse_item({"asin": a, "offersV2": {"listings": [api_items[a]]}}, market)
+                    for a in asins if a in api_items}
+
+    async def fake_fetch(session, url, headers, proxy, timeout):
+        import asyncio
+        await asyncio.sleep(0.05)       # como la red real: deja turno a la API
+        web_urls.append(url)
+        return 200, PAGE.format(price="180,00 €", lp="199,00 €")
+
+    s = Settings(min_discount=50, max_price=100, markets=["ES"], concurrency=1,
+                 delay_min=0, delay_max=0, rescan_hours=0, api_interval=0)
+    asins = list(api_items) + ["B0WEBONLY1"]
+    eng = ScanEngine(s, asins, Database(tmp_path / "t.db"), queue.Queue(), fetcher=fake_fetch)
+    eng.api = FakeApi()
+    eng.start(); eng._thread.join(20)
+    rows = {}
+    while not eng.events.empty():
+        e = eng.events.get()
+        if e[0] == "row":
+            rows[e[1]["asin"]] = e[1]["status"]
+    assert set(rows) == set(asins)
+    # la web y la API se reparten la cola, así que depende de quién coge cada uno
+    by_web = {a for a in asins if any(a in u for u in web_urls)}
+    assert eng.api_done > 0
+    assert rows["B0APIDEAL1"] == ("ok" if "B0APIDEAL1" in by_web else "🚨 ERROR")
+    assert rows["B0APIAMZ01"] == "ok"
+    assert rows["B0APIEXT01"] == "ok" and "B0APIEXT01" in by_web   # sin Prime claro: lo confirma la web
+    assert "B0WEBONLY1" in by_web

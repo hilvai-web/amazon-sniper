@@ -151,6 +151,16 @@ class SniperApp(ctk.CTk):
         self.proxy_label = ctk.CTkLabel(side, text=self._proxy_text(), text_color="gray70", wraplength=280)
         self.proxy_label.pack(padx=16)
 
+        # --- API de Amazon (Creators API de Afiliados)
+        self._section(side, "API de Amazon (opcional)")
+        self.api_id_entry = self._entry(side, "ID de credencial (amzn1.application-oa2-client…)",
+                                        self.settings.api_client_id)
+        self.api_secret_entry = self._entry(side, "Secret (amzn1.oa2-cs.v1…)", self.settings.api_client_secret,
+                                            show="•")
+        self.api_tag_entry = self._entry(side, "ID de afiliado de amazon.es (…-21)", self.settings.api_partner_tag)
+        ctk.CTkButton(side, text="Probar API", fg_color="gray25", hover_color="gray30",
+                      command=self._test_api).pack(fill="x", padx=16, pady=4)
+
         # --- Botones grandes
         ctk.CTkButton(side, text="Probar Telegram", fg_color="gray25", hover_color="gray30",
                       command=self._test_telegram).pack(fill="x", padx=16, pady=(16, 12))
@@ -426,6 +436,9 @@ class SniperApp(ctk.CTk):
             messagebox.showerror(APP_NAME, "Revisa los valores numéricos de la configuración.")
             return False
         s.only_prime = bool(self.prime_var.get())
+        s.api_client_id = self.api_id_entry.get().strip()
+        s.api_client_secret = self.api_secret_entry.get().strip()
+        s.api_partner_tag = self.api_tag_entry.get().strip()
         s.exclude_keywords = " ".join(self.exclude_box.get("1.0", "end").split())
         s.markets = [c for c, v in self.market_vars.items() if v.get()]
         if not s.markets:
@@ -516,6 +529,39 @@ class SniperApp(ctk.CTk):
                                                        "✅ Amazon Sniper conectado correctamente.")
             ok, detail = asyncio.run(go())
             self.events.put(("log", "Telegram OK ✅" if ok else f"Telegram falló: {detail}"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _test_api(self) -> None:
+        import asyncio
+        import threading
+
+        import aiohttp
+
+        from .amazon_api import ApiError, CreatorsApi
+
+        cid, secret, tag = (self.api_id_entry.get().strip(), self.api_secret_entry.get().strip(),
+                            self.api_tag_entry.get().strip())
+        if not (cid and secret and tag):
+            self._log("API: rellena el ID de credencial, el secret y el ID de afiliado.")
+            return
+        asin = self.asins[0] if self.asins else "B0CHX1W1XY"
+
+        def run() -> None:
+            async def go():
+                async with aiohttp.ClientSession() as session:
+                    return await CreatorsApi(cid, secret, tag).get_items(session, [asin], "ES")
+            try:
+                items = asyncio.run(go())
+            except (ApiError, aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                self.events.put(("log", f"API falló: {exc or type(exc).__name__}"))
+                return
+            info = items.get(asin)
+            if info is None:
+                self.events.put(("log", f"API conectada ✅, pero no devolvió el producto {asin}."))
+            else:
+                price = f"{info.price:.2f} €" if info.price else "sin precio"
+                self.events.put(("log", f"API OK ✅ {asin}: {price}, vendedor {info.seller or '?'}"))
 
         threading.Thread(target=run, daemon=True).start()
 

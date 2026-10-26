@@ -84,6 +84,12 @@ Con **🔁 Escaneo continuo** marcado (por defecto), al terminar una vuelta la a
 
 Opcionales: un `.txt` con un proxy HTTP por línea (`IP:puerto`, `http://usuario:clave@host:puerto`; también vale `https://` o `IP puerto`). Al empezar cada vuelta la app prueba todos contra amazon.es y descarta los que no responden, tardan más de `proxy_max_seconds` (8 s) o reciben captcha/error. Durante el escaneo, un proxy que Amazon bloquea (captcha, 403, 503) sale al momento, y uno que falla o va lento dos veces, también. Si no queda ninguno, sigue con la conexión directa.
 
+## API de Amazon (opcional)
+
+Si tienes acceso a la **Creators API** de Amazon Afiliados (Associates Central > Herramientas > Creators API), rellena en la app *ID de credencial* (`amzn1.application-oa2-client…`), *Secret* (`amzn1.oa2-cs.v1…`) y tu *ID de afiliado* de amazon.es (`…-21`), y pulsa *Probar API*. Se guardan solo en `config.json` de tu PC.
+
+Con la API activada, la API y la web se reparten la cola de amazon.es: la API consulta 10 productos por petición (una por segundo, `api_interval`) y la web sigue con el resto. Lo que la API no devuelve, o si falla, lo mira la web. La API no dice si una oferta es Prime: si la vende Amazon cuenta como Prime; si es de otro vendedor y parece un error de precio, la app lo confirma en la web antes de avisar. Si Amazon rechaza las credenciales (por ejemplo, porque la cuenta aún no tiene ventas suficientes para la API), se desactiva en esa vuelta y sigue solo la web.
+
 ## Velocidad, bloqueos y límites (léelo)
 
 - **Velocidad**: con los valores por defecto (4 peticiones simultáneas, 2–5 s de pausa) son unas 3.000 consultas por hora. Subir la concurrencia acelera, pero Amazon empieza a responder con captchas.

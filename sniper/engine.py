@@ -24,6 +24,8 @@ import aiohttp
 import certifi
 
 from . import telegram
+from .amazon_api import MAX_ITEMS as API_MAX_ITEMS
+from .amazon_api import ApiError, CreatorsApi
 from .config import MARKETPLACES, Settings, app_dir
 from .db import Database
 from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_captcha,
@@ -32,6 +34,7 @@ from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_capt
 Fetcher = Callable[[aiohttp.ClientSession, str, dict, str | None, float], Awaitable[tuple[int, str]]]
 
 MAX_RETRIES = 2
+API_MARKETS = {"ES"}        # el ID de afiliado es de amazon.es
 PROXY_TEST_URL = "https://www.amazon.es/"
 
 
@@ -127,6 +130,12 @@ class ScanEngine:
         self.done = 0
         self.total = 0
         self.alerts = 0
+        self.api: CreatorsApi | None = None
+        if settings.api_client_id and settings.api_client_secret and settings.api_partner_tag:
+            self.api = CreatorsApi(settings.api_client_id, settings.api_client_secret,
+                                   settings.api_partner_tag, settings.timeout)
+        self._web_only: set[tuple[str, str]] = set()   # lo que la API no pudo dar
+        self.api_done = 0
 
     # ------------------------------------------------------------ control
     def start(self) -> None:
@@ -180,6 +189,9 @@ class ScanEngine:
                 await self._check_proxies(session)
             workers = [asyncio.create_task(self._worker(i, session, jobs))
                        for i in range(max(1, self.s.concurrency))]
+            if self.api and API_MARKETS & set(self.s.markets):
+                self._log("API de Amazon activada: se reparte la cola con la web.")
+                workers.append(asyncio.create_task(self._api_lane(session, jobs)))
             all_done = asyncio.create_task(jobs.join())
             while not self._stop.is_set() and not all_done.done():
                 await asyncio.sleep(0.3)
@@ -187,6 +199,8 @@ class ScanEngine:
             for w in workers:
                 w.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
+        if self.api_done:
+            self._log(f"API de Amazon: {self.api_done} productos consultados por la API.")
 
     async def _check_proxies(self, session: aiohttp.ClientSession) -> None:
         """Prueba cada proxy contra Amazon y se queda solo con los que responden
@@ -309,15 +323,89 @@ class ScanEngine:
         if info.status == "captcha":
             raise Blocked("captcha", proxy)
         self.identities.report_success(proxy)
+        await self._process(session, info)
 
+    async def _process(self, session: aiohttp.ClientSession, info: ProductInfo) -> bool:
+        """Guarda el precio, filtra y avisa. Devuelve False si un dato de la API
+        no basta (posible error de precio sin saber si es Prime): lo mira la web."""
+        asin, market = info.asin, info.market
         reference = self.db.reference_price(asin, market) if self.s.use_history else None
+        if info.source == "api" and self.s.only_prime and not info.prime and info.available:
+            discount = evaluate(info, reference)[0]
+            if info.price and discount >= self.s.min_discount:
+                return False
         self.db.record_scan(asin, market, info.title, info.price, info.list_price)
         reason = low_value_reason(info, reference, self.s.min_value, self.is_excluded)
         if reason:
             self.db.mark_excluded(asin, market, reason)
             self._finish(asin, market, info, reason)
-            return
+            return True
         await self._maybe_alert(session, info, reference)
+        return True
+
+    async def _api_lane(self, session: aiohttp.ClientSession,
+                        jobs: "asyncio.Queue[tuple[str, str, int]]") -> None:
+        """Consulta la API de 10 en 10 mientras los workers web siguen con la cola.
+        Lo que la API no da (o si falla) vuelve a la cola para la web."""
+        backoff = 0.0
+        while not self._stop.is_set() and self.api:
+            batch = [await jobs.get()]
+            while len(batch) < API_MAX_ITEMS:
+                try:
+                    batch.append(jobs.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            mine = [j for j in batch if j[1] in API_MARKETS and (j[0], j[1]) not in self._web_only]
+            for job in batch:
+                if job not in mine:
+                    jobs.put_nowait(job)
+            try:
+                if not mine:
+                    await self._sleep(1)
+                    continue
+                market = mine[0][1]
+                for job in [j for j in mine if j[1] != market]:
+                    jobs.put_nowait(job)
+                mine = [j for j in mine if j[1] == market]
+                try:
+                    results = await self.api.get_items(session, [a for a, _, _ in mine], market)
+                    backoff = 0.0
+                except (ApiError, aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+                    for job in mine:
+                        self._web_only.add((job[0], job[1]))
+                        jobs.put_nowait(job)
+                    if isinstance(exc, ApiError) and exc.auth:
+                        self._log(f"API de Amazon desactivada en esta vuelta: {exc}. Sigue solo la web.")
+                        self.api = None
+                        return
+                    if isinstance(exc, ApiError) and exc.throttled:
+                        backoff = min(60.0, max(5.0, backoff * 2))
+                    else:
+                        backoff = min(60.0, max(5.0, backoff))
+                        self._log(f"API de Amazon: {str(exc)[:120] or type(exc).__name__}. Esos productos los mira la web.")
+                    await self._sleep(backoff)
+                    continue
+                for asin, mkt, tries in mine:
+                    info = results.get(asin)
+                    handled = False
+                    if info is not None:
+                        try:
+                            handled = await self._process(session, info)
+                            if not handled:
+                                # posible error sin Prime confirmado: se comprueba en la web
+                                await self._scan_one(session, asin, mkt)
+                                handled = True
+                        except (Blocked, aiohttp.ClientError, asyncio.TimeoutError, OSError):
+                            handled = False
+                    if handled:
+                        self.api_done += 1
+                    else:
+                        self._web_only.add((asin, mkt))
+                        jobs.put_nowait((asin, mkt, tries))
+                await self._sleep(self.s.api_interval)
+            finally:
+                for _ in batch:
+                    jobs.task_done()
 
     async def _maybe_alert(self, session: aiohttp.ClientSession, info: ProductInfo,
                            reference: float | None) -> None:

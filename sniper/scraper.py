@@ -79,6 +79,8 @@ class ProductInfo:
     list_price: float | None = None
     available: bool = True
     prime: bool = False         # la oferta destacada es Prime / la envía Amazon
+    seller: str = ""            # vendedor de la oferta destacada (solo API)
+    source: str = "web"         # web | api
     status: str = "ok"          # ok | captcha | not_found | no_price | error
 
 
