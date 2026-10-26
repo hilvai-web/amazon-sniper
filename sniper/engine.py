@@ -325,8 +325,11 @@ class ScanEngine:
         status = {"ok": "ok", "no_price": "sin precio", "not_found": "no encontrado"}.get(info.status, info.status)
         if not info.available:
             status = "agotado"
+        elif self.s.only_prime and info.price is not None and not info.prime:
+            status = "no Prime"
         is_deal = (
             info.price is not None and info.available
+            and (info.prime or not self.s.only_prime)
             and discount >= self.s.min_discount
             and (self.s.max_price <= 0 or info.price <= self.s.max_price)
         )

@@ -121,6 +121,9 @@ class SniperApp(ctk.CTk):
         self.maxprice_entry = self._entry(side, "Precio máximo (€) · 0 = sin límite", f"{self.settings.max_price:g}")
         self.minvalue_entry = self._entry(side, "Valor mínimo del producto (€) · precio normal",
                                           f"{self.settings.min_value:g}")
+        self.prime_var = tk.BooleanVar(value=self.settings.only_prime)
+        ctk.CTkCheckBox(side, text="Solo Prime (enviado por Amazon)", variable=self.prime_var,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(anchor="w", padx=16, pady=(8, 2))
         ctk.CTkLabel(side, text="Excluir si el título contiene (separado por comas)", anchor="w",
                      text_color="gray80").pack(fill="x", padx=16, pady=(4, 0))
         self.exclude_box = ctk.CTkTextbox(side, height=90, wrap="word")
@@ -422,6 +425,7 @@ class SniperApp(ctk.CTk):
         except ValueError:
             messagebox.showerror(APP_NAME, "Revisa los valores numéricos de la configuración.")
             return False
+        s.only_prime = bool(self.prime_var.get())
         s.exclude_keywords = " ".join(self.exclude_box.get("1.0", "end").split())
         s.markets = [c for c, v in self.market_vars.items() if v.get()]
         if not s.markets:

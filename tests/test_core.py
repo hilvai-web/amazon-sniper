@@ -12,7 +12,8 @@ PAGE = """<html><body><span id="productTitle"> Monitor Gaming 27" </span>
 <div id="corePriceDisplay_desktop_feature_div">
  <span class="a-price aok-align-center"><span class="a-offscreen">{price}</span></span>
  <span class="basisPrice">PVPR: <span class="a-price a-text-price"><span class="a-offscreen">{lp}</span></span></span>
-</div><div id="availability">En stock</div></body></html>"""
+</div><div id="availability">En stock</div>
+<div id="merchant-info">Vendido y enviado por Amazon.</div></body></html>"""
 CAPTCHA = '<form action="/errors/validateCaptcha"><input id="captchacharacters"></form>'
 
 
@@ -242,3 +243,18 @@ def test_price_fallbacks():
     for price, html in cases.items():
         info = parse_product(html, "B0X", "ES", "u")
         assert (info.price, info.status) == (price, "ok")
+
+
+def test_prime_detection():
+    head = '<span id="productTitle">TV</span><div id="corePrice_feature_div"><span class="a-price">' \
+           '<span class="a-offscreen">499,00 €</span></span></div>'
+    def prime(extra):
+        return parse_product(head + extra, "B0X", "ES", "u").prime
+    assert prime('<div id="merchant-info">Vendido y enviado por Amazon.</div>')
+    assert prime('<div id="tabular-buybox">Enviado desde Amazon Vendido por TiendaX</div>')
+    assert prime('<div id="desktop_buybox"><i class="a-icon a-icon-prime" aria-label="Amazon Prime"></i></div>')
+    assert not prime('<div id="merchant-info">Vendido y enviado por TiendaX.</div>')
+    assert not prime('')
+    only_others = parse_product('<span id="productTitle">TV</span><div id="buybox-see-all-buying-choices">'
+                                'desde 389,90 € <i class="a-icon-prime"></i></div>', "B0X", "ES", "u")
+    assert only_others.price == 389.9 and not only_others.prime

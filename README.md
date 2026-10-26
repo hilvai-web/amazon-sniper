@@ -32,7 +32,7 @@ Para cada ASIN y marketplace marcado descarga la ficha `amazon.xx/dp/ASIN` y cal
 1. **PVP tachado** que muestra la propia Amazon (precio recomendado / precio anterior).
 2. **Histórico local**: la mediana de los precios que la app ha ido guardando en `alertas.db` durante los últimos 90 días (necesita al menos 3 lecturas). Cuanto más tiempo la uses, mejor detecta caídas reales, porque es tu propio "Keepa" local.
 
-Hay alerta cuando el descuento ≥ *Descuento mínimo*, el precio ≤ *Precio máximo* (0 = sin límite) y el producto está disponible. La base de datos evita duplicados: el mismo producto no vuelve a avisar en 24 h salvo que baje todavía más.
+Hay alerta cuando el descuento ≥ *Descuento mínimo*, el precio ≤ *Precio máximo* (0 = sin límite) y el producto está disponible. Con *Solo Prime* marcado (por defecto), además la oferta destacada tiene que ser Prime o enviada por Amazon; si la vende y envía otro vendedor, la fila sale como "no Prime" y no avisa. La base de datos evita duplicados: el mismo producto no vuelve a avisar en 24 h salvo que baje todavía más.
 
 ## Instalar en cualquier PC con Windows
 

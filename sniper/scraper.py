@@ -78,6 +78,7 @@ class ProductInfo:
     price: float | None = None
     list_price: float | None = None
     available: bool = True
+    prime: bool = False         # la oferta destacada es Prime / la envía Amazon
     status: str = "ok"          # ok | captcha | not_found | no_price | error
 
 
@@ -191,6 +192,33 @@ def _hidden_price(soup: BeautifulSoup, html: str) -> float | None:
     return float(m.group(1)) or None if m else None
 
 
+# Zona de la oferta destacada (la caja de compra de la derecha)
+BUYBOX_SELECTORS = ["#buybox", "#desktop_buybox", "#apex_desktop", "#corePriceDisplay_desktop_feature_div",
+                    "#mir-layout-DELIVERY_BLOCK", "#deliveryBlockMessage", "#tabular-buybox",
+                    "#merchant-info", "#fulfillerInfoFeature_feature_div"]
+PRIME_ICON = 'i.a-icon-prime, .a-icon-prime, [aria-label*="Prime"], #prime-badge, .prime-badge'
+# "Enviado por Amazon" / "Gestionado por Amazon" en los idiomas de los marketplaces
+SHIPS_FROM_AMAZON_RE = re.compile(
+    r"(enviado|gestionado|vendido y enviado) por amazon|enviado desde\s*:?\s*amazon"
+    r"|ships from\s*:?\s*amazon|fulfilled by amazon|sold and shipped by amazon"
+    r"|versand(?: durch)?\s*:?\s*amazon|verkauf und versand durch amazon"
+    r"|exp[ée]di[ée] (?:par|depuis)\s*:?\s*amazon|spedito da\s*:?\s*amazon|venduto e spedito da amazon"
+    r"|verzonden (?:door|vanuit)\s*:?\s*amazon",
+    re.IGNORECASE)
+
+
+def detect_prime(soup: BeautifulSoup) -> bool:
+    """True si la oferta destacada lleva Prime o la envía Amazon (también los
+    vendedores externos que usan los almacenes de Amazon, que son Prime)."""
+    for sel in BUYBOX_SELECTORS:
+        for node in soup.select(sel):
+            if node.select_one(PRIME_ICON):
+                return True
+            if SHIPS_FROM_AMAZON_RE.search(" ".join(node.get_text(" ", strip=True).split())):
+                return True
+    return False
+
+
 def is_captcha(html: str) -> bool:
     low = html[:20000].lower()
     return "validatecaptcha" in low or "captchacharacters" in low or "/errors/validatecaptcha" in low
@@ -216,8 +244,12 @@ def parse_product(html: str, asin: str, market: str, url: str) -> ProductInfo:
                                  "non disponibile", "currently unavailable", "niet beschikbaar")):
             info.available = False
 
-    info.price = (_first_price(soup, PRICE_SELECTORS) or _hidden_price(soup, html)
-                  or _first_price(soup, OTHER_SELLERS_SELECTORS))
+    info.price = _first_price(soup, PRICE_SELECTORS) or _hidden_price(soup, html)
+    if info.price:
+        info.prime = detect_prime(soup)
+    else:
+        # sin oferta destacada: solo hay otros vendedores, nunca cuenta como Prime
+        info.price = _first_price(soup, OTHER_SELLERS_SELECTORS)
     info.list_price = _first_price(soup, LIST_PRICE_SELECTORS)
     if info.list_price and info.price and info.list_price <= info.price:
         info.list_price = None  # tachado inválido o igual al precio actual

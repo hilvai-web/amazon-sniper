@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.3.0"
 
 
 def app_dir() -> Path:
@@ -62,6 +62,7 @@ class Settings:
     rescan_hours: float = 1.0           # no re-escanear un ASIN visto hace menos
     alert_cooldown_hours: float = 24.0  # antiduplicados de alertas
     use_history: bool = True            # comparar también con el histórico local
+    only_prime: bool = True             # solo avisar si la oferta es Prime / la envía Amazon
     min_value: float = 100.0            # solo productos cuyo precio normal sea >= esto
     exclude_keywords: str = DEFAULT_EXCLUDE
     last_asin_file: str = ""
