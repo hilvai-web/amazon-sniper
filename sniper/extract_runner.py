@@ -39,6 +39,19 @@ def list_age_hours(key: str) -> float | None:
     return (time.time() - path.stat().st_mtime) / 3600 if path.exists() else None
 
 
+def purge_lists() -> int:
+    """Borra las listas y el progreso guardados (se rehacen al iniciar)."""
+    removed = 0
+    for pattern in ("amazon_top*.csv", "extractor_estado_*.json"):
+        for path in LISTS_DIR.glob(pattern):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
 def is_complete(key: str) -> bool:
     return runner.is_complete(key)
 

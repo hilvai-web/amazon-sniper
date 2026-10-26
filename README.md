@@ -104,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File .\instalar_extractor.ps1 -Reset   # emp
 
 La primera vez crea un entorno `.venv` y descarga Chromium (~150 MB). Sale `amazon_top1000_<categoria>.csv` con la columna `ASIN`, que se carga directamente en Amazon Sniper con *Cargar ASINs*.
 
-La categoría se pasa como argumento. `CATEGORIAS` en `extractor/config.py` asigna a cada clave la URL de Best Sellers de amazon.es donde empieza:
+La categoría se pasa como argumento. `CATEGORIAS` en `extractor/config.py` asigna a cada clave la URL donde empieza. Las categorías concretas (Televisores, Smartphones, Auriculares, Portátiles, Cámaras) usan búsquedas de amazon.es dentro de Electrónica ordenadas por más vendidos (`/s?k=televisores&i=electronics`), más las de `BUSQUEDAS_EXTRA`, y se saltan los anuncios patrocinados. Un producto solo entra si su título tiene alguna palabra de `PALABRAS_CATEGORIA` (p. ej. "televisor", "TV", "OLED") y ninguna de `EXCLUIR_CATEGORIA` (soportes, mandos, CarPlay...). Solo "Electrónica, TV y hogar" recorre el árbol de Best Sellers, porque desde una subcategoría el menú lateral lleva a categorías vecinas:
 
 ```powershell
 .\.venv\Scripts\python.exe extractor_amazon.py telefonia_movil      # -> amazon_top1000_telefonia_movil.csv

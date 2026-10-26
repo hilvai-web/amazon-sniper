@@ -7,13 +7,18 @@ from playwright.async_api import async_playwright
 
 from . import config
 from .browser import BrowserSession
-from .crawler import Blocked, crawl, log
+from .crawler import Blocked, CategoryFilter, crawl, log
 from .storage import AsinStore, load_state, save_state
 
 
 def start_url_for(key: str) -> str:
-    """URL de Best Sellers con la que arranca la cola de Playwright."""
+    """URL principal de la categoría (búsqueda o Best Sellers)."""
     return config.CATEGORIAS[key]
+
+
+def start_urls_for(key: str) -> list[str]:
+    """Todas las URLs con las que arranca la cola: la principal y las búsquedas extra."""
+    return [config.CATEGORIAS[key], *config.BUSQUEDAS_EXTRA.get(key, [])]
 
 
 def is_complete(key: str) -> bool:
@@ -40,7 +45,8 @@ async def run_extraction(key: str, reset: bool = False) -> int:
         session = BrowserSession(pw)
         await session.start()
         try:
-            await crawl(session, store, queue, visited, start_url, state_path)
+            await crawl(session, store, queue, visited, start_urls_for(key), state_path,
+                        CategoryFilter(key))
         except Blocked as exc:
             log(f"Parado: {exc}. Vuelve a intentarlo más tarde y continuará donde lo dejó.")
         except (KeyboardInterrupt, asyncio.CancelledError):

@@ -175,3 +175,55 @@ def test_updater_clean_env(monkeypatch):
     env = updater.clean_env()
     assert "_PYI_APPLICATION_HOME_DIR" not in env and "_MEIPASS2" not in env
     assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
+def test_category_filter_and_search_urls():
+    from extractor import config
+    from extractor.crawler import CategoryFilter, extract_asins, is_search, search_page_number, search_page_url
+    tv = CategoryFilter("televisores")
+    assert tv.accepts("Samsung TV QLED 55\" Q60D 2024, Smart TV 4K")
+    assert tv.accepts("LG 65UT73006LA - Televisor 65 pulgadas 4K UHD")
+    assert not tv.accepts("Pantalla CarPlay inalámbrica 9 pulgadas para coche, Android Auto")
+    assert not tv.accepts("Soporte TV pared para 32-75 pulgadas")
+    assert not tv.accepts("Apple iPhone 15 128 GB")
+    assert CategoryFilter("electronica_hogar").accepts("Pantalla CarPlay para coche")
+    items = [
+        {"href": "https://www.amazon.es/dp/B0TV000001", "title": "Samsung Smart TV 55 Crystal UHD", "text": "449,00 €\n..."},
+        {"href": "https://www.amazon.es/dp/B0CARPLAY1", "title": "Pantalla CarPlay inalámbrica 10,26\"", "text": "129,99 €"},
+    ]
+    assert extract_asins(items, tv) == (["B0TV000001"], 1)
+    url = ("https://www.amazon.es/s?k=televisores&__mk_es_ES=%C3%85M%C3%85&crid=8J18YELDO481"
+           "&sprefix=televisore%2Caps%2C346&ref=nb_sb_noss_2")
+    assert is_search(url) and not is_search(config.CATEGORIAS["electronica_hogar"])
+    assert search_page_url(url, 1) == "https://www.amazon.es/s?k=televisores"
+    p3 = search_page_url(config.CATEGORIAS["televisores"], 3)
+    assert search_page_number(p3) == 3 and "i=electronics" in p3
+    for key in config.CATEGORIAS:
+        assert key in config.NOMBRES
+
+
+def test_crawl_search_pages(tmp_path, monkeypatch):
+    import asyncio
+    from extractor import config, crawler
+    from extractor.storage import AsinStore
+    monkeypatch.setattr(config, "DELAY_RANGE", (0, 0))
+    pages = {}
+
+    async def fake_fetch(session, url):
+        pages[url] = pages.get(url, 0) + 1
+        n = crawler.search_page_number(url)
+        q = dict(crawler.parse_qsl(crawler.urlsplit(url).query))["k"]
+        items = [{"href": f"https://www.amazon.es/dp/{q[:4].upper():<4}{n:03d}{i:03d}".replace(" ", "X"),
+                  "title": f"Smart TV {q} {i}", "text": "499,00 €"} for i in range(2)]
+        items.append({"href": "https://www.amazon.es/dp/B0CARPLAY1", "title": "Pantalla CarPlay coche",
+                      "text": "150,00 €"})
+        return items, [], n < 3
+    monkeypatch.setattr(crawler, "fetch_with_retries", fake_fetch)
+    store = AsinStore(tmp_path / "o.csv", limit=100)
+    queue, visited = [], set()
+    urls = [config.CATEGORIAS["televisores"], config.BUSQUEDAS_EXTRA["televisores"][0]]
+    asyncio.run(crawler.crawl(None, store, queue, visited, urls, tmp_path / "st.json",
+                              crawler.CategoryFilter("televisores")))
+    assert len(store) == 12 and not queue          # 2 búsquedas x 3 páginas x 2 TV
+    assert "B0CARPLAY1" not in store._asins
+    assert all(v == 1 for v in pages.values()) and len(pages) == 6

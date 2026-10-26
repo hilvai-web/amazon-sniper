@@ -49,6 +49,12 @@ class SniperApp(ctk.CTk):
         self._build_main()
         self._style_table()
 
+        if self.settings.lists_version < 2:
+            # v2.2.0: las listas viejas mezclaban productos de otras categorías
+            if extract_runner.purge_lists():
+                self._log("Listas de productos antiguas borradas: se rehacen al pulsar INICIAR.")
+            self.settings.lists_version = 2
+            self.settings.save()
         own = extract_runner.csv_path(self.settings.category)
         if self.settings.last_asin_file and Path(self.settings.last_asin_file) != own:
             self._load_asin_file(self.settings.last_asin_file, quiet=True)

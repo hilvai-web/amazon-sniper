@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.2.0"
 
 
 def app_dir() -> Path:
@@ -71,6 +71,7 @@ class Settings:
     cycle_pause_seconds: float = 60.0   # pausa entre ciclos
     proxy_max_seconds: float = 8.0      # proxy más lento que esto = descartado
     settings_version: int = 2
+    lists_version: int = 2              # sube cuando cambia cómo se extraen las listas
 
     @classmethod
     def load(cls) -> "Settings":
@@ -79,6 +80,7 @@ class Settings:
         except (OSError, ValueError):
             return cls()
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        known.setdefault("lists_version", 1)
         if known.get("settings_version", 1) < 2:
             # v2.0.2: con escaneo continuo, re-escanear cada hora en vez de cada 6
             if known.get("rescan_hours") == 6.0:

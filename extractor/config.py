@@ -5,15 +5,63 @@ BASE_URL = "https://www.amazon.es"
 TARGET_ASINS = 1000          # se detiene al llegar exactamente a esta cifra
 
 # Categorías que acepta la línea de comandos: python extractor_amazon.py <clave>
-# Cada clave apunta al listado de Best Sellers de amazon.es donde empieza la
-# extracción; desde ahí se recorren sus subcategorías hasta reunir 1000 ASINs.
+# Cada clave apunta a la URL donde empieza la extracción:
+#  - una búsqueda de amazon.es (/s?k=...&i=electronics): se recorren sus páginas
+#    de resultados, ordenadas por "más vendidos";
+#  - un listado de Best Sellers (/gp/bestsellers/...): se recorren también sus
+#    subcategorías. Solo se usa para la categoría general, porque el menú lateral
+#    lleva a categorías vecinas (de TV a "pantallas CarPlay", por ejemplo).
+_S = "https://www.amazon.es/s?i=electronics&s=exact-aware-popularity-rank&k="
 CATEGORIAS: dict[str, str] = {
-    "electronica_hogar": "https://www.amazon.es/gp/bestsellers/electronics",               # TV, Home Cinema y Hogar
-    "televisores": "https://www.amazon.es/gp/bestsellers/electronics/934359031",           # Televisores (Smart TV, OLED, QLED...)
-    "telefonia_movil": "https://www.amazon.es/gp/bestsellers/electronics/17425698031",     # Smartphones y Smartwatches
-    "audio_y_video": "https://www.amazon.es/gp/bestsellers/electronics/665477031",         # Auriculares y Altavoces
-    "computacion_y_portatiles": "https://www.amazon.es/gp/bestsellers/computers",          # Laptops y Tablets
-    "fotografia_y_video": "https://www.amazon.es/gp/bestsellers/electronics/664660031",    # Cámaras y Vídeo profesional
+    "electronica_hogar": "https://www.amazon.es/gp/bestsellers/electronics",       # TV, Home Cinema y Hogar
+    "televisores": _S + "televisores",                                             # Smart TV, OLED, QLED...
+    "telefonia_movil": _S + "smartphone+libre",                                    # Smartphones y Smartwatches
+    "audio_y_video": _S + "auriculares+inalambricos",                              # Auriculares y Altavoces
+    "computacion_y_portatiles": "https://www.amazon.es/s?i=computers&s=exact-aware-popularity-rank&k=portatil",
+    "fotografia_y_video": _S + "camara+fotos",                                     # Cámaras y Vídeo profesional
+}
+# Más búsquedas por categoría, para pasar de las ~300 que da una sola
+BUSQUEDAS_EXTRA: dict[str, list[str]] = {
+    "televisores": [_S + q for q in (
+        "smart+tv+55+pulgadas", "smart+tv+65+pulgadas", "televisor+oled", "televisor+qled",
+        "smart+tv+43+pulgadas", "televisor+75+pulgadas", "smart+tv+50+pulgadas")],
+    "telefonia_movil": [_S + q for q in (
+        "iphone", "samsung+galaxy", "xiaomi+smartphone", "smartwatch", "google+pixel", "movil+5g")],
+    "audio_y_video": [_S + q for q in (
+        "altavoz+bluetooth", "barra+de+sonido", "auriculares+cancelacion+ruido", "home+cinema",
+        "auriculares+gaming")],
+    "computacion_y_portatiles": ["https://www.amazon.es/s?i=computers&s=exact-aware-popularity-rank&k=" + q
+                                 for q in ("tablet", "portatil+gaming", "macbook", "ipad", "monitor",
+                                           "ordenador+sobremesa")],
+    "fotografia_y_video": [_S + q for q in (
+        "camara+reflex", "camara+mirrorless", "objetivo+camara", "camara+deportiva", "dron+camara",
+        "gimbal")],
+}
+# Un producto solo entra en la categoría si su título contiene alguna de estas
+# palabras (sin tildes ni mayúsculas). Vacío o ausente = no se comprueba.
+PALABRAS_CATEGORIA: dict[str, list[str]] = {
+    "televisores": ["televisor", "televisores", "tv", "television", "smart tv", "oled", "qled"],
+    "telefonia_movil": ["smartphone", "movil", "telefono", "iphone", "galaxy", "pixel", "xiaomi",
+                        "redmi", "poco", "oneplus", "motorola", "oppo", "realme", "honor",
+                        "smartwatch", "reloj inteligente", "watch"],
+    "audio_y_video": ["auriculares", "auricular", "cascos", "headphones", "earbuds", "airpods",
+                      "altavoz", "altavoces", "speaker", "barra de sonido", "soundbar", "home cinema",
+                      "subwoofer", "receptor av", "amplificador"],
+    "computacion_y_portatiles": ["portatil", "laptop", "notebook", "ultrabook", "chromebook", "macbook",
+                                 "tablet", "ipad", "ordenador", "pc", "monitor", "mac mini", "imac"],
+    "fotografia_y_video": ["camara", "objetivo", "reflex", "mirrorless", "gopro", "dji", "videocamara",
+                           "dron", "gimbal", "estabilizador", "lente"],
+}
+# Palabras que sacan un producto de una categoría concreta (además de la lista
+# negra general): accesorios que se cuelan en la búsqueda
+EXCLUIR_CATEGORIA: dict[str, list[str]] = {
+    "televisores": ["soporte", "mando", "stick", "cube", "antena", "receptor", "decodificador",
+                    "barra", "proyector", "carplay", "android auto", "mueble", "monitor", "coche"],
+    "telefonia_movil": ["soporte", "tripode", "gimbal", "correa", "auriculares", "altavoz"],
+    "audio_y_video": ["soporte", "almohadillas", "estuche"],
+    "computacion_y_portatiles": ["soporte", "mochila", "maletin", "teclado", "raton", "base refrigeradora",
+                                 "docking", "hub"],
+    "fotografia_y_video": ["soporte", "tripode", "mochila", "bolsa", "filtro", "tarjeta", "bateria"],
 }
 # Nombre que se muestra en la app y en los mensajes
 NOMBRES: dict[str, str] = {
@@ -57,6 +105,7 @@ EXCLUDE_KEYWORDS = [
 TITLE_WORDS = 10
 
 PAGES_PER_CATEGORY = 2                           # Amazon muestra 50 por página, máx. 100 por categoría
+MAX_SEARCH_PAGES = 20                            # páginas de resultados por búsqueda (Amazon suele dar 7-20)
 
 
 # Navegador que usa Playwright, en orden de preferencia. "msedge" y "chrome" son
