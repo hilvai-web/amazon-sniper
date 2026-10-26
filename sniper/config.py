@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.1.0"
 
 
 def app_dir() -> Path:
@@ -59,7 +59,7 @@ class Settings:
     timeout: float = 20.0
     proxies_file: str = ""              # .txt opcional, un proxy por línea
     batch_size: int = 10                # ASINs por identidad (proxy + UA)
-    rescan_hours: float = 6.0           # no re-escanear un ASIN visto hace menos
+    rescan_hours: float = 1.0           # no re-escanear un ASIN visto hace menos
     alert_cooldown_hours: float = 24.0  # antiduplicados de alertas
     use_history: bool = True            # comparar también con el histórico local
     min_value: float = 100.0            # solo productos cuyo precio normal sea >= esto
@@ -67,6 +67,10 @@ class Settings:
     last_asin_file: str = ""
     category: str = "electronica_hogar"  # categoría elegida para el extractor
     list_max_age_hours: float = 24.0    # al iniciar, rehace la lista si es más antigua
+    continuous: bool = True             # al terminar un ciclo, empieza otro
+    cycle_pause_seconds: float = 60.0   # pausa entre ciclos
+    proxy_max_seconds: float = 8.0      # proxy más lento que esto = descartado
+    settings_version: int = 2
 
     @classmethod
     def load(cls) -> "Settings":
@@ -75,6 +79,11 @@ class Settings:
         except (OSError, ValueError):
             return cls()
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        if known.get("settings_version", 1) < 2:
+            # v2.0.2: con escaneo continuo, re-escanear cada hora en vez de cada 6
+            if known.get("rescan_hours") == 6.0:
+                known["rescan_hours"] = 1.0
+            known["settings_version"] = 2
         return cls(**known)
 
     def save(self) -> None:

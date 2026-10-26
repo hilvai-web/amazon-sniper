@@ -9,6 +9,7 @@ TARGET_ASINS = 1000          # se detiene al llegar exactamente a esta cifra
 # extracción; desde ahí se recorren sus subcategorías hasta reunir 1000 ASINs.
 CATEGORIAS: dict[str, str] = {
     "electronica_hogar": "https://www.amazon.es/gp/bestsellers/electronics",               # TV, Home Cinema y Hogar
+    "televisores": "https://www.amazon.es/gp/bestsellers/electronics/934359031",           # Televisores (Smart TV, OLED, QLED...)
     "telefonia_movil": "https://www.amazon.es/gp/bestsellers/electronics/17425698031",     # Smartphones y Smartwatches
     "audio_y_video": "https://www.amazon.es/gp/bestsellers/electronics/665477031",         # Auriculares y Altavoces
     "computacion_y_portatiles": "https://www.amazon.es/gp/bestsellers/computers",          # Laptops y Tablets
@@ -17,6 +18,7 @@ CATEGORIAS: dict[str, str] = {
 # Nombre que se muestra en la app y en los mensajes
 NOMBRES: dict[str, str] = {
     "electronica_hogar": "Electrónica, TV y hogar",
+    "televisores": "Televisores",
     "telefonia_movil": "Smartphones y smartwatches",
     "audio_y_video": "Auriculares y altavoces",
     "computacion_y_portatiles": "Portátiles, tablets e informática",

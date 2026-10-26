@@ -26,11 +26,13 @@ import certifi
 from . import telegram
 from .config import MARKETPLACES, Settings
 from .db import Database
-from .scraper import Blocked, IdentityPool, ProductInfo, build_headers, parse_product
+from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_captcha,
+                      parse_product, USER_AGENTS)
 
 Fetcher = Callable[[aiohttp.ClientSession, str, dict, str | None, float], Awaitable[tuple[int, str]]]
 
 MAX_RETRIES = 2
+PROXY_TEST_URL = "https://www.amazon.es/"
 
 
 async def http_fetch(session: aiohttp.ClientSession, url: str, headers: dict,
@@ -100,7 +102,8 @@ class ScanEngine:
         self.asins = asins
         self.db = db
         self.events = events
-        self.identities = IdentityPool(proxies or [], settings.batch_size)
+        self.proxies = list(proxies or [])
+        self.identities = IdentityPool(self.proxies, settings.batch_size)
         self.fetcher = fetcher
         self.is_excluded = keyword_matcher(settings.exclude_keywords)
         self._stop = threading.Event()
@@ -156,9 +159,11 @@ class ScanEngine:
             return
 
         ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-        connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=self.s.concurrency * 2)
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx, limit=max(self.s.concurrency * 2, 30))
         async with aiohttp.ClientSession(connector=connector,
                                          cookie_jar=aiohttp.CookieJar()) as session:
+            if self.proxies:
+                await self._check_proxies(session)
             workers = [asyncio.create_task(self._worker(i, session, jobs))
                        for i in range(max(1, self.s.concurrency))]
             all_done = asyncio.create_task(jobs.join())
@@ -168,6 +173,47 @@ class ScanEngine:
             for w in workers:
                 w.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
+
+    async def _check_proxies(self, session: aiohttp.ClientSession) -> None:
+        """Prueba cada proxy contra Amazon y se queda solo con los que responden
+        bien y rápido. Los demás (caídos, lentos, captcha o error) se descartan."""
+        self._log(f"Comprobando {len(self.proxies)} proxies contra Amazon "
+                  f"(máx. {self.s.proxy_max_seconds:g} s cada uno)…")
+        limit = asyncio.Semaphore(25)
+
+        async def probe(proxy: str) -> tuple[str, float] | None:
+            async with limit:
+                if self._stop.is_set():
+                    return None
+                start = time.monotonic()
+                try:
+                    status, html = await self.fetcher(
+                        session, PROXY_TEST_URL, build_headers(random.choice(USER_AGENTS), "es-ES,es;q=0.9"),
+                        proxy, self.s.proxy_max_seconds)
+                except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError):
+                    return None
+                elapsed = time.monotonic() - start
+                if status != 200 or is_captcha(html) or elapsed > self.s.proxy_max_seconds:
+                    return None
+                return proxy, elapsed
+
+        results = [r for r in await asyncio.gather(*(probe(p) for p in self.proxies)) if r]
+        results.sort(key=lambda r: r[1])
+        good = [p for p, _ in results]
+        self.identities = IdentityPool(good, self.s.batch_size)
+        if good:
+            self._log(f"Proxies útiles: {len(good)} de {len(self.proxies)} "
+                      f"(el más rápido responde en {results[0][1]:.1f} s).")
+        else:
+            self._log(f"Ningún proxy de los {len(self.proxies)} funciona con Amazon: se usa la conexión directa.")
+
+    def _drop_proxy(self, proxy: str | None, reason: str, now: bool = False) -> None:
+        """Cuenta un fallo del proxy (2 fallos = fuera) o lo quita ya si now=True."""
+        dropped = self.identities.remove(proxy) if now else self.identities.report_failure(proxy)
+        if dropped:
+            left = self.identities.proxies_alive
+            self._log(f"Proxy descartado ({reason}): {proxy}. Quedan {left}"
+                      + ("" if left else "; sigo con la conexión directa") + ".")
 
     async def _sleep(self, seconds: float) -> None:
         end = time.monotonic() + seconds
@@ -192,8 +238,12 @@ class ScanEngine:
                     await self._scan_one(session, asin, market)
                     self._block_streak = 0
                 except Blocked as exc:
-                    self._on_block(str(exc))
-                    if tries < MAX_RETRIES:
+                    if exc.proxy:
+                        # con proxies, un bloqueo solo afecta a ese proxy: se cambia y se reintenta
+                        self._drop_proxy(exc.proxy, f"Amazon lo bloquea: {exc}", now=True)
+                    else:
+                        self._on_block(str(exc))
+                    if tries < MAX_RETRIES or (exc.proxy and tries < MAX_RETRIES + 3):
                         jobs.put_nowait((asin, market, tries + 1))
                         continue
                     self._finish(asin, market, None, "bloqueado")
@@ -218,28 +268,30 @@ class ScanEngine:
         domain, lang = MARKETPLACES[market]
         url = f"https://{domain}/dp/{asin}"
         ua, proxy = self.identities.next()
+        # con proxy, el tiempo máximo es el de proxy lento; sin proxy, el normal
+        timeout = min(self.s.timeout, self.s.proxy_max_seconds * 2) if proxy else self.s.timeout
+        start = time.monotonic()
         try:
-            status, html = await self.fetcher(session, url, build_headers(ua, lang),
-                                              proxy, self.s.timeout)
+            status, html = await self.fetcher(session, url, build_headers(ua, lang), proxy, timeout)
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
-            self.identities.report_failure(proxy)
+            self._drop_proxy(proxy, "sin respuesta")
             raise
-        if status in (503, 429):
-            self.identities.report_failure(proxy)
-            raise Blocked(f"HTTP {status}")
+        if proxy and time.monotonic() - start > self.s.proxy_max_seconds:
+            self._drop_proxy(proxy, "muy lento")
+        if status in (503, 429, 403):
+            raise Blocked(f"HTTP {status}", proxy)
         if status == 404:
             self.identities.report_success(proxy)
             self.db.record_scan(asin, market, None, None, None)
             self._finish(asin, market, None, "no existe")
             return
         if status >= 400:
-            self.identities.report_failure(proxy)
+            self._drop_proxy(proxy, f"HTTP {status}")
             raise aiohttp.ClientResponseError(None, (), status=status)  # type: ignore[arg-type]
 
         info = parse_product(html, asin, market, url)
         if info.status == "captcha":
-            self.identities.report_failure(proxy)
-            raise Blocked("captcha")
+            raise Blocked("captcha", proxy)
         self.identities.report_success(proxy)
 
         reference = self.db.reference_price(asin, market) if self.s.use_history else None

@@ -76,6 +76,14 @@ pyinstaller --noconfirm --clean --onefile --noconsole --name AmazonSniper ^
   main.py
 ```
 
+## Escaneo continuo
+
+Con **🔁 Escaneo continuo** marcado (por defecto), al terminar una vuelta la app espera `cycle_pause_seconds` (60 s) y empieza otra. Cada vuelta revisa los productos que no se han mirado en la última hora (*No re-escanear antes de*; pon 0 para revisarlo todo siempre) y rehace la lista de la categoría si tiene más de 24 h. Si no queda nada pendiente, espera 10 minutos antes de volver a mirar. DETENER para el bucle.
+
+## Proxies
+
+Opcionales: un `.txt` con un proxy HTTP por línea (`IP:puerto`, `http://usuario:clave@host:puerto`; también vale `https://` o `IP puerto`). Al empezar cada vuelta la app prueba todos contra amazon.es y descarta los que no responden, tardan más de `proxy_max_seconds` (8 s) o reciben captcha/error. Durante el escaneo, un proxy que Amazon bloquea (captcha, 403, 503) sale al momento, y uno que falla o va lento dos veces, también. Si no queda ninguno, sigue con la conexión directa.
+
 ## Velocidad, bloqueos y límites (léelo)
 
 - **Velocidad**: con los valores por defecto (4 peticiones simultáneas, 2–5 s de pausa) son unas 3.000 consultas por hora. Subir la concurrencia acelera, pero Amazon empieza a responder con captchas.

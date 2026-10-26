@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from pathlib import Path
 import tkinter as tk
 import webbrowser
@@ -144,6 +145,15 @@ class SniperApp(ctk.CTk):
         # --- Botones grandes
         ctk.CTkButton(side, text="Probar Telegram", fg_color="gray25", hover_color="gray30",
                       command=self._test_telegram).pack(fill="x", padx=16, pady=(16, 12))
+
+        self.continuous_var = tk.BooleanVar(value=self.settings.continuous)
+        ctk.CTkCheckBox(actions, text="🔁 Escaneo continuo (al acabar, vuelve a empezar)",
+                        variable=self.continuous_var, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                        command=self._on_continuous).pack(anchor="w", padx=16, pady=(12, 0))
+        self._cycle = 0
+        self._next_cycle_at = 0.0
+        self._cycle_after: str | None = None
+        self._user_stopped = False
 
         self.start_btn = ctk.CTkButton(actions, text="▶  INICIAR SNIPER", height=64, fg_color=ACCENT,
                                        hover_color=ACCENT_HOVER, text_color="black",
@@ -418,6 +428,8 @@ class SniperApp(ctk.CTk):
         """INICIAR: si hace falta, primero saca la lista de la categoría y luego escanea."""
         if (self.engine and self.engine.running) or (self.extract_run and self.extract_run.running):
             return
+        self._cancel_next_cycle()
+        self._user_stopped = False
         if not self._read_settings():
             return
         if not self.custom_file:
@@ -462,6 +474,12 @@ class SniperApp(ctk.CTk):
         self.stop_btn.configure(state="disabled")
 
     def _stop(self) -> None:
+        self._user_stopped = True
+        if self._cycle_after:
+            self._cancel_next_cycle()
+            self._reset_buttons("Escaneo continuo detenido")
+            self._log("Escaneo continuo detenido.")
+            return
         if self.extract_run and self.extract_run.running:
             self._cancel_extract()
             self._reset_buttons("Detenido")
@@ -563,10 +581,51 @@ class SniperApp(ctk.CTk):
 
     def _on_finished(self, reason: str) -> None:
         self._log(reason)
+        self._refresh_db_stats()
+        if self.continuous_var.get() and not self._user_stopped and not reason.startswith("Error"):
+            self._schedule_next_cycle()
+            return
         self.status_label.configure(text=reason)
         self.start_btn.configure(state="normal", text="▶  INICIAR SNIPER")
         self.stop_btn.configure(state="disabled")
-        self._refresh_db_stats()
+
+    # ------------------------------------------------------ escaneo continuo
+    def _on_continuous(self) -> None:
+        self.settings.continuous = bool(self.continuous_var.get())
+        self.settings.save()
+        if not self.settings.continuous and self._cycle_after:
+            self._stop()
+
+    def _schedule_next_cycle(self) -> None:
+        """Programa el siguiente ciclo. Si en este no quedaba nada por revisar
+        (todo escaneado hace poco), espera más para no dar vueltas en vacío."""
+        self._cycle += 1
+        idle = bool(self.engine and self.engine.total == 0)
+        wait = 600 if idle else max(5, self.settings.cycle_pause_seconds)
+        self._next_cycle_at = time.time() + wait
+        self._log(f"🔁 Ciclo {self._cycle} terminado. "
+                  + ("Todo está revisado hace poco; el siguiente" if idle else "El siguiente")
+                  + f" empieza en {int(wait)} s.")
+        self.start_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self._tick_countdown()
+
+    def _tick_countdown(self) -> None:
+        left = int(self._next_cycle_at - time.time())
+        if left <= 0:
+            self._cycle_after = None
+            self.start_btn.configure(state="normal")
+            self._start()
+            return
+        mins, secs = divmod(left, 60)
+        self.start_btn.configure(text=f"⏳ PRÓXIMO CICLO EN {mins}:{secs:02d}")
+        self.status_label.configure(text=f"Esperando ciclo {self._cycle + 1}")
+        self._cycle_after = self.after(1000, self._tick_countdown)
+
+    def _cancel_next_cycle(self) -> None:
+        if self._cycle_after:
+            self.after_cancel(self._cycle_after)
+            self._cycle_after = None
 
     def _refresh_db_stats(self) -> None:
         st = self.db.stats()

@@ -55,5 +55,7 @@ async def run_extraction(key: str, reset: bool = False) -> int:
         state_path.unlink(missing_ok=True)
         return 0
     if not queue:
-        log("Aviso: no quedan subcategorías por recorrer antes de llegar al objetivo.")
+        # categoría recorrida entera: la lista está terminada aunque no llegue a 1000
+        state_path.unlink(missing_ok=True)
+        log(f"Esta categoría no da para {config.TARGET_ASINS}: se usan los {len(store)} encontrados.")
     return 1

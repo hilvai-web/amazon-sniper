@@ -66,7 +66,11 @@ class ProductInfo:
 
 
 class Blocked(Exception):
-    """Amazon devolvió captcha o 503: hay que frenar."""
+    """Amazon devolvió captcha o 503: hay que frenar (o cambiar de proxy)."""
+
+    def __init__(self, msg: str, proxy: str | None = None):
+        super().__init__(msg)
+        self.proxy = proxy
 
 
 def load_asins(path: str | Path) -> list[str]:
@@ -189,7 +193,7 @@ class IdentityPool:
     """Rota la identidad de las peticiones (User-Agent + proxy opcional) cada
     `batch_size` productos y descarta proxies que fallan repetidamente."""
 
-    def __init__(self, proxies: list[str], batch_size: int = 10, max_failures: int = 3):
+    def __init__(self, proxies: list[str], batch_size: int = 10, max_failures: int = 2):
         self._proxies = list(proxies)
         random.shuffle(self._proxies)
         self._failures: dict[str, int] = {}
@@ -219,13 +223,26 @@ class IdentityPool:
     def rotate(self) -> None:
         self._current = self._new_identity()
 
-    def report_failure(self, proxy: str | None) -> None:
+    def report_failure(self, proxy: str | None) -> bool:
+        """Cuenta un fallo; devuelve True si el proxy queda descartado."""
         if not proxy:
-            return
+            return False
         self._failures[proxy] = self._failures.get(proxy, 0) + 1
         if self._failures[proxy] >= self._max_failures and proxy in self._proxies:
             self._proxies.remove(proxy)
             self.rotate()
+            return True
+        if self._current[1] == proxy:
+            self.rotate()  # no insistir con un proxy que acaba de fallar
+        return False
+
+    def remove(self, proxy: str | None) -> bool:
+        """Descarta el proxy de inmediato (p. ej. Amazon lo ha bloqueado)."""
+        if proxy and proxy in self._proxies:
+            self._proxies.remove(proxy)
+            self.rotate()
+            return True
+        return False
 
     def report_success(self, proxy: str | None) -> None:
         if proxy:

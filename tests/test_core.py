@@ -138,3 +138,31 @@ def test_load_proxies(tmp_path):
                                "http://10.0.0.1:8080", "http://u:p@h.com:3128"]
     f.write_text("1.2.3.4:80\n", encoding="utf-16")
     assert load_proxies(f) == ["http://1.2.3.4:80"]
+
+
+def test_engine_drops_bad_proxies(tmp_path):
+    """Proxies caídos o bloqueados se descartan en la prueba inicial y durante el escaneo."""
+    import asyncio as aio
+
+    async def fetch(session, url, headers, proxy, timeout):
+        if proxy == "http://dead:1":
+            raise aio.TimeoutError()
+        if proxy == "http://captcha:1":
+            return 200, CAPTCHA
+        if proxy == "http://later:1" and "/dp/" in url:
+            return 503, ""
+        return 200, PAGE.format(price="180,00 €", lp="199,00 €")
+
+    db = Database(tmp_path / "t.db")
+    events = queue.Queue()
+    s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0, batch_size=1)
+    eng = ScanEngine(s, ["B0NORMAL01", "B0NORMAL02", "B0NORMAL03"], db, events,
+                     proxies=["http://dead:1", "http://captcha:1", "http://good:1", "http://later:1"],
+                     fetcher=fetch)
+    eng._on_block = lambda reason: None
+    eng.start(); eng._thread.join(20)
+    logs = [e[1] for e in list(events.queue) if e[0] == "log"]
+    rows = [e[1] for e in list(events.queue) if e[0] == "row"]
+    assert any("Proxies útiles: 2 de 4" in l for l in logs)
+    assert all(r["status"] == "ok" for r in rows) and len(rows) == 3
+    assert eng.identities.proxies_alive == 1          # 'later' cayó al recibir 503
