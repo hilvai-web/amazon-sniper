@@ -24,7 +24,7 @@ import aiohttp
 import certifi
 
 from . import telegram
-from .config import MARKETPLACES, Settings
+from .config import MARKETPLACES, Settings, app_dir
 from .db import Database
 from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_captcha,
                       parse_product, USER_AGENTS)
@@ -92,6 +92,20 @@ def low_value_reason(info: ProductInfo, reference: float | None, min_value: floa
     if min_value > 0 and known and max(known) < min_value:
         return "excluido: barato"
     return None
+
+
+DEBUG_DIR = app_dir() / "depuracion"
+DEBUG_MAX_FILES = 10
+
+
+def save_debug_page(html: str, asin: str, market: str) -> None:
+    """Guarda unas pocas fichas "sin precio" para poder ver qué devolvió Amazon."""
+    try:
+        DEBUG_DIR.mkdir(exist_ok=True)
+        if len(list(DEBUG_DIR.glob("*.html"))) < DEBUG_MAX_FILES:
+            (DEBUG_DIR / f"sin_precio_{asin}_{market}.html").write_text(html, encoding="utf-8")
+    except OSError:
+        pass
 
 
 class ScanEngine:
@@ -290,6 +304,8 @@ class ScanEngine:
             raise aiohttp.ClientResponseError(None, (), status=status)  # type: ignore[arg-type]
 
         info = parse_product(html, asin, market, url)
+        if info.status == "no_price":
+            save_debug_page(html, asin, market)
         if info.status == "captcha":
             raise Blocked("captcha", proxy)
         self.identities.report_success(proxy)

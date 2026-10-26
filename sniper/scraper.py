@@ -31,9 +31,14 @@ USER_AGENTS = [
 ]
 
 PRICE_SELECTORS = [
+    "#corePriceDisplay_desktop_feature_div .priceToPay .a-offscreen",
     "#corePrice_feature_div .a-price:not(.a-text-price) .a-offscreen",
     "#corePriceDisplay_desktop_feature_div .a-price:not(.a-text-price) .a-offscreen",
+    "#tp_price_block_total_price_ww .a-offscreen",
+    "#apex_offerDisplay_desktop .a-price:not(.a-text-price) .a-offscreen",
     "#apex_desktop .a-price:not(.a-text-price) .a-offscreen",
+    ".priceToPay .a-offscreen",
+    ".apexPriceToPay .a-offscreen",
     "#priceblock_dealprice",
     "#priceblock_ourprice",
     "#price_inside_buybox",
@@ -41,6 +46,17 @@ PRICE_SELECTORS = [
     "#kindle-price",
     ".a-price.aok-align-center .a-offscreen",
 ]
+# Sin vendedor destacado Amazon solo enseña "Ver todas las opciones de compra"
+# con el precio más bajo de otros vendedores
+OTHER_SELLERS_SELECTORS = [
+    "#buybox-see-all-buying-choices .a-price .a-offscreen",
+    "#buybox-see-all-buying-choices",
+    "#olp_feature_div .a-price .a-offscreen",
+    "#olp_feature_div",
+    "#all-offers-display .a-price .a-offscreen",
+]
+PRICE_AMOUNT_RE = re.compile(r'"priceAmount"\s*:\s*(\d+(?:\.\d+)?)')
+EURO_RE = re.compile(r"(\d{1,3}(?:[.\s\xa0]\d{3})*,\d{2}|\d+,\d{2})\s*€")
 
 LIST_PRICE_SELECTORS = [
     "#corePriceDisplay_desktop_feature_div .basisPrice .a-offscreen",
@@ -134,13 +150,45 @@ def parse_price(text: str | None) -> float | None:
     return value if value > 0 else None
 
 
+def _node_price(node) -> float | None:
+    """Precio de un nodo. Amazon a veces deja vacío el .a-offscreen y pone el
+    importe solo en .a-price-whole + .a-price-fraction."""
+    text = node.get_text(strip=True)
+    value = parse_price(text) if len(text) < 40 else None
+    if value:
+        return value
+    box = node if "a-price" in (node.get("class") or []) else node.find_parent(class_="a-price")
+    if box is not None:
+        whole, frac = box.select_one(".a-price-whole"), box.select_one(".a-price-fraction")
+        if whole:
+            digits = re.sub(r"\D", "", whole.get_text())
+            cents = re.sub(r"\D", "", frac.get_text()) if frac else "00"
+            if digits:
+                return float(f"{digits}.{cents or '00'}") or None
+    m = EURO_RE.search(text.replace("\xa0", " "))
+    return parse_price(m.group(1)) if m else None
+
+
 def _first_price(soup: BeautifulSoup, selectors: list[str]) -> float | None:
     for sel in selectors:
         for node in soup.select(sel):
-            value = parse_price(node.get_text(strip=True))
+            value = _node_price(node)
             if value:
                 return value
     return None
+
+
+def _hidden_price(soup: BeautifulSoup, html: str) -> float | None:
+    """Precio de la oferta destacada en los datos ocultos del formulario de compra."""
+    for node in soup.select('input[name*="customerVisiblePrice"][name$="[amount]"]'):
+        try:
+            value = float(node.get("value", ""))
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    m = PRICE_AMOUNT_RE.search(html)
+    return float(m.group(1)) or None if m else None
 
 
 def is_captcha(html: str) -> bool:
@@ -168,7 +216,8 @@ def parse_product(html: str, asin: str, market: str, url: str) -> ProductInfo:
                                  "non disponibile", "currently unavailable", "niet beschikbaar")):
             info.available = False
 
-    info.price = _first_price(soup, PRICE_SELECTORS)
+    info.price = (_first_price(soup, PRICE_SELECTORS) or _hidden_price(soup, html)
+                  or _first_price(soup, OTHER_SELLERS_SELECTORS))
     info.list_price = _first_price(soup, LIST_PRICE_SELECTORS)
     if info.list_price and info.price and info.list_price <= info.price:
         info.list_price = None  # tachado inválido o igual al precio actual

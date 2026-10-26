@@ -227,3 +227,18 @@ def test_crawl_search_pages(tmp_path, monkeypatch):
     assert len(store) == 12 and not queue          # 2 búsquedas x 3 páginas x 2 TV
     assert "B0CARPLAY1" not in store._asins
     assert all(v == 1 for v in pages.values()) and len(pages) == 6
+
+
+def test_price_fallbacks():
+    t = '<span id="productTitle">Samsung TV 55</span>'
+    cases = {
+        1299.0: t + '<div id="corePriceDisplay_desktop_feature_div"><span class="a-price priceToPay">'
+                    '<span class="a-offscreen"> </span><span aria-hidden="true"><span class="a-price-whole">'
+                    '1.299<span>,</span></span><span class="a-price-fraction">00</span><span>€</span></span></span></div>',
+        449.0: t + '<input type="hidden" name="items[0.base][customerVisiblePrice][amount]" value="449.0">',
+        529.0: t + '<script>{"displayPrice":"529,00 €","priceAmount":529.00}</script>',
+        389.9: t + '<div id="buybox-see-all-buying-choices"><a>Ver todas las opciones</a> desde 389,90&nbsp;€</div>',
+    }
+    for price, html in cases.items():
+        info = parse_product(html, "B0X", "ES", "u")
+        assert (info.price, info.status) == (price, "ok")
