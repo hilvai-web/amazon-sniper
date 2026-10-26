@@ -386,6 +386,8 @@ class SniperApp(ctk.CTk):
             n = len(load_proxies(self.settings.proxies_file))
         except OSError:
             return "No se pudo leer el archivo de proxies"
+        if n == 0:
+            return "El archivo no tiene proxies (¿está vacío o sin guardar?)"
         return f"{n} proxies cargados"
 
     def _read_settings(self) -> bool:

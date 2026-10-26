@@ -127,3 +127,14 @@ def test_category_argument(capsys):
     assert "telefonia_movil" in capsys.readouterr().out
     assert extractor_amazon.resolve_category(None) == "electronica_hogar"
     assert str(config.output_csv("telefonia_movil")) == "amazon_top1000_telefonia_movil.csv"
+
+
+def test_load_proxies(tmp_path):
+    from sniper.scraper import load_proxies
+    f = tmp_path / "p.txt"
+    f.write_text("# lista\nhttp://47.91.65.23:3128\nhttps://198.199.86.11:8080\n10.0.0.1\t8080\n"
+                 "socks5://1.1.1.1:1080\nhttp://u:p@h.com:3128\n\nhttp://47.91.65.23:3128\n")
+    assert load_proxies(f) == ["http://47.91.65.23:3128", "http://198.199.86.11:8080",
+                               "http://10.0.0.1:8080", "http://u:p@h.com:3128"]
+    f.write_text("1.2.3.4:80\n", encoding="utf-16")
+    assert load_proxies(f) == ["http://1.2.3.4:80"]

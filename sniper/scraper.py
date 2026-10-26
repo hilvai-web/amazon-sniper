@@ -80,15 +80,29 @@ def load_asins(path: str | Path) -> list[str]:
 
 def load_proxies(path: str | Path) -> list[str]:
     """Proxies del usuario, uno por línea: host:puerto o http://user:pass@host:puerto."""
-    proxies = []
-    for line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
+    raw = Path(path).read_bytes()
+    # el Bloc de notas puede guardar en UTF-16 ("Unicode") o con BOM
+    text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig", "ignore")
+    proxies: dict[str, None] = {}
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].isdigit() and "://" not in parts[0]:
+            line = f"{parts[0]}:{parts[1]}"          # "1.2.3.4 8080" o con tabulador
+        else:
+            line = parts[0]
+        # las listas marcan "https" a los proxies que admiten webs https, pero
+        # la conexión con el proxy en sí es HTTP normal
+        if line.lower().startswith("https://"):
+            line = "http://" + line[8:]
         if "://" not in line:
             line = "http://" + line
-        proxies.append(line)
-    return proxies
+        if line.lower().startswith("socks"):
+            continue                                  # SOCKS no está soportado
+        proxies.setdefault(line, None)
+    return list(proxies)
 
 
 def parse_price(text: str | None) -> float | None:
