@@ -166,3 +166,12 @@ def test_engine_drops_bad_proxies(tmp_path):
     assert any("Proxies útiles: 2 de 4" in l for l in logs)
     assert all(r["status"] == "ok" for r in rows) and len(rows) == 3
     assert eng.identities.proxies_alive == 1          # 'later' cayó al recibir 503
+
+
+def test_updater_clean_env(monkeypatch):
+    from sniper import updater
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "C:/Temp/_MEI123")
+    monkeypatch.setenv("_MEIPASS2", "C:/Temp/_MEI123")
+    env = updater.clean_env()
+    assert "_PYI_APPLICATION_HOME_DIR" not in env and "_MEIPASS2" not in env
+    assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"

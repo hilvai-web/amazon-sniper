@@ -84,6 +84,16 @@ def install_and_restart(new_exe: Path) -> None:
         'del "%~f0"\r\n',
         encoding="ascii", errors="replace",
     )
-    subprocess.Popen(["cmd", "/c", str(bat)], cwd=str(current.parent),
+    subprocess.Popen(["cmd", "/c", str(bat)], cwd=str(current.parent), env=clean_env(),
                      creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
                      close_fds=True)
+
+
+def clean_env() -> dict[str, str]:
+    """Entorno sin las variables internas de PyInstaller. Si el .exe nuevo las
+    heredara, intentaría usar la carpeta temporal _MEIxxxx de esta app (que se
+    borra al cerrarla) y fallaría con "Failed to load Python DLL"."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith("_PYI_") or k.startswith("_MEI") or k == "_MEIPASS2")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
