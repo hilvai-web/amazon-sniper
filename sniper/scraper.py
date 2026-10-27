@@ -81,6 +81,7 @@ class ProductInfo:
     prime: bool = False         # la oferta destacada es Prime / la envía Amazon
     seller: str = ""            # vendedor de la oferta destacada (solo API)
     source: str = "web"         # web | api
+    other_offers: bool = False  # sin oferta destacada, pero hay "ver todas las opciones de compra"
     status: str = "ok"          # ok | captcha | not_found | no_price | error
 
 
@@ -197,11 +198,17 @@ def _hidden_price(soup: BeautifulSoup, html: str) -> float | None:
 # Zona de la oferta destacada (la caja de compra de la derecha)
 BUYBOX_SELECTORS = ["#buybox", "#desktop_buybox", "#apex_desktop", "#corePriceDisplay_desktop_feature_div",
                     "#mir-layout-DELIVERY_BLOCK", "#deliveryBlockMessage", "#tabular-buybox",
-                    "#merchant-info", "#fulfillerInfoFeature_feature_div"]
+                    "#merchant-info", "#fulfillerInfoFeature_feature_div",
+                    "#merchantInfoFeature_feature_div", "#offer-display-features",
+                    "#shipsFromSoldByInsideBuyBox_feature_div"]
 PRIME_ICON = 'i.a-icon-prime, .a-icon-prime, [aria-label*="Prime"], #prime-badge, .prime-badge'
 # "Enviado por Amazon" / "Gestionado por Amazon" en los idiomas de los marketplaces
 SHIPS_FROM_AMAZON_RE = re.compile(
-    r"(enviado|gestionado|vendido y enviado) por amazon|enviado desde\s*:?\s*amazon"
+    r"(enviado|gestionado|vendido y enviado|vendido) por\s*:?\s*amazon|(enviado|env[ií]o) desde\s*:?\s*amazon"
+    r"|sold by\s*:?\s*amazon|verkäufer\s*:?\s*amazon|verkauf durch\s*:?\s*amazon"
+    r"|exp[ée]diteur\s*:?\s*amazon|vendeur\s*:?\s*amazon|vendu par\s*:?\s*amazon"
+    r"|spedizione\s*:?\s*amazon|venditore\s*:?\s*amazon|venduto da\s*:?\s*amazon"
+    r"|verzending\s*:?\s*amazon|verkoper\s*:?\s*amazon|verkocht door\s*:?\s*amazon"
     r"|ships from\s*:?\s*amazon|fulfilled by amazon|sold and shipped by amazon"
     r"|versand(?: durch)?\s*:?\s*amazon|verkauf und versand durch amazon"
     r"|exp[ée]di[ée] (?:par|depuis)\s*:?\s*amazon|spedito da\s*:?\s*amazon|venduto e spedito da amazon"
@@ -219,6 +226,49 @@ def detect_prime(soup: BeautifulSoup) -> bool:
             if SHIPS_FROM_AMAZON_RE.search(" ".join(node.get_text(" ", strip=True).split())):
                 return True
     return False
+
+
+# "No hay ofertas destacadas disponibles" y equivalentes de los otros marketplaces
+NO_FEATURED_RE = re.compile(
+    r"ofertas destacadas|featured offers|empfohlenen angebote|offres? en vedette|offerta in evidenza"
+    r"|aanbevolen aanbiedingen|todas las opciones de compra|alle kaufoptionen|toutes les options d.achat"
+    r"|tutte le opzioni di acquisto|alle koopopties|all buying options", re.IGNORECASE)
+OTHER_OFFERS_LINKS = "#buybox-see-all-buying-choices, #aod-ingress-link, a[href*='aod=1'], #olp_feature_div a"
+
+
+def offers_url(domain: str, asin: str) -> str:
+    """Lista de todas las ofertas (el panel "Ver todas las opciones de compra")."""
+    return f"https://{domain}/gp/product/ajax/ref=dp_aod_NEW_mbc?asin={asin}&pc=dp&experienceId=aodAjaxMain"
+
+
+@dataclass
+class Offer:
+    price: float
+    prime: bool
+    seller: str = ""
+
+
+def parse_offers(html: str) -> list[Offer]:
+    """Ofertas nuevas del panel de todas las ofertas, de la más barata a la más cara."""
+    soup = BeautifulSoup(html, _PARSER)
+    offers: list[Offer] = []
+    for node in soup.select('#aod-pinned-offer, [id="aod-offer"]'):
+        heading = node.select_one('[id^="aod-offer-heading"]')
+        if heading and re.search(r"usad|used|gebraucht|occasion|usato|gebruikt|reacondicionad|refurbished"
+                                 r"|generalüberholt|reconditionn|ricondizionat|segunda mano",
+                                 heading.get_text(" ", strip=True), re.IGNORECASE):
+            continue    # usado / reacondicionado
+        price = _first_price(node, [".a-price:not(.a-text-price) .a-offscreen", ".a-price .a-offscreen",
+                                    ".aok-offscreen"])
+        if not price:
+            continue
+        ships = node.select_one('[id^="aod-offer-shipsFrom"]')
+        sold = node.select_one('[id^="aod-offer-soldBy"]')
+        ships_text = " ".join(ships.get_text(" ", strip=True).split()) if ships else ""
+        seller = " ".join(sold.get_text(" ", strip=True).split()) if sold else ""
+        prime = bool(node.select_one(PRIME_ICON)) or "amazon" in ships_text.lower()
+        offers.append(Offer(price, prime, seller[:60]))
+    return sorted(offers, key=lambda o: o.price)
 
 
 def is_captcha(html: str) -> bool:
@@ -250,8 +300,12 @@ def parse_product(html: str, asin: str, market: str, url: str) -> ProductInfo:
     if info.price:
         info.prime = detect_prime(soup)
     else:
-        # sin oferta destacada: solo hay otros vendedores, nunca cuenta como Prime
+        # sin oferta destacada: solo hay otros vendedores. El precio "desde" no
+        # cuenta como Prime; el motor puede abrir la lista de ofertas para verlo
         info.price = _first_price(soup, OTHER_SELLERS_SELECTORS)
+        info.other_offers = bool(soup.select_one(OTHER_OFFERS_LINKS)) or bool(
+            NO_FEATURED_RE.search(" ".join(n.get_text(" ", strip=True)
+                                           for n in soup.select("#rightCol, #buybox, #desktop_buybox"))))
     info.list_price = _first_price(soup, LIST_PRICE_SELECTORS)
     if info.list_price and info.price and info.list_price <= info.price:
         info.list_price = None  # tachado inválido o igual al precio actual

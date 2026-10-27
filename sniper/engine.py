@@ -29,7 +29,7 @@ from .amazon_api import ApiError, CreatorsApi
 from .config import MARKETPLACES, Settings, app_dir
 from .db import Database
 from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_captcha,
-                      parse_product, USER_AGENTS)
+                      offers_url, parse_offers, parse_product, USER_AGENTS)
 
 Fetcher = Callable[[aiohttp.ClientSession, str, dict, str | None, float], Awaitable[tuple[int, str]]]
 
@@ -323,7 +323,34 @@ class ScanEngine:
         if info.status == "captcha":
             raise Blocked("captcha", proxy)
         self.identities.report_success(proxy)
+        if info.other_offers and (info.price is None or self.s.only_prime):
+            await self._fill_from_offers(session, info, ua, lang, proxy, timeout)
         await self._process(session, info)
+
+    async def _fill_from_offers(self, session: aiohttp.ClientSession, info: ProductInfo, ua: str,
+                                lang: str, proxy: str | None, timeout: float) -> None:
+        """Sin oferta destacada: abre "Ver todas las opciones de compra" y toma la
+        oferta nueva más barata (la más barata con Prime si se pide Solo Prime)."""
+        domain = MARKETPLACES[info.market][0]
+        await self._sleep(random.uniform(0.5, 1.5))
+        try:
+            status, html = await self.fetcher(session, offers_url(domain, info.asin),
+                                              build_headers(ua, lang), proxy, timeout)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            return
+        if status != 200 or is_captcha(html):
+            return
+        offers = parse_offers(html)
+        if not offers:
+            if info.price is None:
+                info.other_offers = False     # nadie lo vende ahora mismo
+            return
+        prime = [o for o in offers if o.prime]
+        best = prime[0] if prime and (self.s.only_prime or prime[0].price <= offers[0].price) else offers[0]
+        info.price, info.prime, info.seller = best.price, best.prime, best.seller
+        info.status = "ok"
+        if info.list_price and info.list_price <= info.price:
+            info.list_price = None
 
     async def _process(self, session: aiohttp.ClientSession, info: ProductInfo) -> bool:
         """Guarda el precio, filtra y avisa. Devuelve False si un dato de la API
@@ -410,7 +437,8 @@ class ScanEngine:
     async def _maybe_alert(self, session: aiohttp.ClientSession, info: ProductInfo,
                            reference: float | None) -> None:
         discount, ref, source = evaluate(info, reference)
-        status = {"ok": "ok", "no_price": "sin precio", "not_found": "no encontrado"}.get(info.status, info.status)
+        status = {"ok": "ok", "no_price": "sin precio" if info.other_offers else "sin ofertas",
+                  "not_found": "no encontrado"}.get(info.status, info.status)
         if not info.available:
             status = "agotado"
         elif self.s.only_prime and info.price is not None and not info.prime:

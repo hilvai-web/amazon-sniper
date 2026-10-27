@@ -322,3 +322,64 @@ def test_engine_shares_queue_with_api(tmp_path):
     assert rows["B0APIAMZ01"] == "ok"
     assert rows["B0APIEXT01"] == "ok" and "B0APIEXT01" in by_web   # sin Prime claro: lo confirma la web
     assert "B0WEBONLY1" in by_web
+
+
+AOD = """<div id="aod-offer-list">
+<div id="aod-offer"><div id="aod-offer-heading"><span>Usado - Como nuevo</span></div>
+ <span class="a-price"><span class="a-offscreen">90,00 €</span></span></div>
+<div id="aod-offer"><div id="aod-offer-heading"><span>Nuevo</span></div>
+ <span class="a-price"><span class="a-offscreen">120,00 €</span></span>
+ <div id="aod-offer-shipsFrom"><span>Envío desde</span><span>TiendaX</span></div>
+ <div id="aod-offer-soldBy"><span>Vendido por</span><a>TiendaX</a></div></div>
+<div id="aod-offer"><div id="aod-offer-heading"><span>Nuevo</span></div>
+ <span class="a-price"><span class="a-offscreen">135,50 €</span></span>
+ <div id="aod-offer-shipsFrom"><span>Envío desde</span><span>Amazon</span></div>
+ <div id="aod-offer-soldBy"><span>Vendido por</span><a>OtraTienda</a></div></div>
+</div>"""
+NO_FEATURED = """<span id="productTitle">Samsung TV 27 F6005</span>
+<div id="rightCol"><div id="buybox">No hay ofertas destacadas disponibles
+<span id="buybox-see-all-buying-choices"><a class="a-button-text">Ver todas las opciones de compra</a></span>
+</div></div>"""
+
+
+def test_offers_panel():
+    from sniper.scraper import parse_offers
+    offers = parse_offers(AOD)
+    assert [(o.price, o.prime) for o in offers] == [(120.0, False), (135.5, True)]
+    info = parse_product(NO_FEATURED, "B0X", "ES", "u")
+    assert info.price is None and info.other_offers
+    assert not parse_product('<span id="productTitle">TV</span>', "B0X", "ES", "u").other_offers
+
+
+def test_engine_reads_offers_panel(tmp_path):
+    async def fetch(session, url, headers, proxy, timeout):
+        if "/gp/product/ajax" in url:
+            return 200, AOD if "B0OFFERS01" in url else "<div></div>"
+        return 200, NO_FEATURED
+
+    for only_prime, expected in ((True, 135.5), (False, 120.0)):
+        s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
+                     min_value=0, only_prime=only_prime)
+        eng = ScanEngine(s, ["B0OFFERS01", "B0NOBODY01"], Database(tmp_path / f"{only_prime}.db"),
+                         queue.Queue(), fetcher=fetch)
+        eng.start(); eng._thread.join(20)
+        rows = {}
+        while not eng.events.empty():
+            e = eng.events.get()
+            if e[0] == "row":
+                rows[e[1]["asin"]] = e[1]
+        assert rows["B0OFFERS01"]["price"] == expected and rows["B0OFFERS01"]["status"] == "ok"
+        assert rows["B0NOBODY01"]["status"] == "sin ofertas"
+
+
+def test_prime_tabular_labels():
+    head = '<span id="productTitle">TV</span><div id="corePrice_feature_div"><span class="a-price">' \
+           '<span class="a-offscreen">197,99 €</span></span></div>'
+    def prime(extra):
+        return parse_product(head + extra, "B0X", "ES", "u").prime
+    assert prime('<div id="tabular-buybox"><span>Envío desde</span> <span>Amazon</span>'
+                 '<span>Vendido por</span> <span>Amazon</span></div>')
+    assert prime('<div id="merchantInfoFeature_feature_div">Vendido por Amazon.es</div>')
+    assert prime('<div id="offer-display-features">Versand Amazon Verkäufer Amazon</div>')
+    assert not prime('<div id="tabular-buybox"><span>Envío desde</span> <span>TiendaX</span>'
+                     '<span>Vendido por</span> <span>TiendaX</span></div>')
