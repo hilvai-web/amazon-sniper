@@ -46,6 +46,24 @@ def set_log_sink(fn) -> None:
     _log_sink = fn
 
 
+def _default_alert(msg: str) -> None:
+    print("\a" + msg, flush=True)      # \a = pitido de la consola
+
+
+_alert_sink = _default_alert
+
+
+def set_alert_sink(fn) -> None:
+    """La app recibe aquí los avisos que necesitan al usuario (captcha)."""
+    global _alert_sink
+    _alert_sink = fn
+
+
+def page_has_captcha(html: str) -> bool:
+    low = html[:20000].lower()
+    return "validatecaptcha" in low or "captchacharacters" in low
+
+
 def log(msg: str) -> None:
     for line in str(msg).splitlines() or [""]:
         if line.strip():
@@ -218,8 +236,7 @@ async def load_page(session: BrowserSession, url: str) -> tuple[list[dict], list
     response = await session.page.goto(url, wait_until="domcontentloaded")
     if response and response.status in (403, 429, 503):
         raise Blocked(f"HTTP {response.status}")
-    html = (await session.page.content())[:20000].lower()
-    if "validatecaptcha" in html or "captchacharacters" in html:
+    if page_has_captcha(await session.page.content()):
         raise Blocked("captcha")
     await accept_cookies(session)
     await scroll_to_bottom(session)
@@ -236,6 +253,13 @@ async def fetch_with_retries(session: BrowserSession, url: str) -> tuple[list[di
         try:
             return await load_page(session, url)
         except (Blocked, PlaywrightTimeout, PlaywrightError) as exc:
+            if isinstance(exc, Blocked) and str(exc) == "captcha" and config.MANUAL_CAPTCHA:
+                _alert_sink("[!] Amazon ha solicitado verificación. Resuelve el captcha en la ventana "
+                            "del navegador que se acaba de abrir; al terminar, sigue solo.")
+                if await session.solve_captcha_by_hand(url, page_has_captcha):
+                    log("  Captcha resuelto: continúo.")
+                    continue
+                log("  Captcha sin resolver a tiempo.")
             wait = 20 * (attempt + 1) + random.uniform(0, 10)
             log(f"  ! {type(exc).__name__}: {str(exc)[:80]} -> nueva identidad, espera {wait:.0f}s")
             await session.new_identity()

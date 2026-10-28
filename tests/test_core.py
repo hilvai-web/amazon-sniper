@@ -54,7 +54,7 @@ def test_engine_end_to_end(tmp_path):
     db = Database(tmp_path / "t.db")
     events = queue.Queue()
     s = Settings(min_discount=50, max_price=100, markets=["ES"], concurrency=2,
-                 delay_min=0, delay_max=0, rescan_hours=0)
+                 delay_min=0, delay_max=0, rescan_hours=0, captcha_pause=False)
     eng = ScanEngine(s, ["B0DEAL0001", "B0NORMAL01", "B0MISSING1"], db, events, fetcher=fake_fetch)
     eng._on_block = lambda reason: None     # sin pausa de 30 s en la prueba
     eng.start(); eng._thread.join(20)
@@ -383,3 +383,34 @@ def test_prime_tabular_labels():
     assert prime('<div id="offer-display-features">Versand Amazon Verkäufer Amazon</div>')
     assert not prime('<div id="tabular-buybox"><span>Envío desde</span> <span>TiendaX</span>'
                      '<span>Vendido por</span> <span>TiendaX</span></div>')
+
+
+def test_captcha_pause_and_resume(tmp_path):
+    import threading
+    import time as _t
+    calls = {"n": 0}
+
+    async def fetch(session, url, headers, proxy, timeout):
+        calls["n"] += 1
+        return 200, CAPTCHA if calls["n"] == 1 else PAGE.format(price="180,00 €", lp="199,00 €")
+
+    d = Settings()
+    assert (d.concurrency, d.delay_min, d.delay_max, d.captcha_pause) == (2, 5.0, 10.0, True)
+    s = Settings(markets=["ES"], delay_min=0, delay_max=0, rescan_hours=0)
+    events = queue.Queue()
+    eng = ScanEngine(s, ["B0CAPTCHA1", "B0NORMAL02"], Database(tmp_path / "t.db"), events, fetcher=fetch)
+    eng.start()
+    deadline = _t.time() + 5
+    while not eng.waiting_captcha and _t.time() < deadline:
+        _t.sleep(0.05)
+    assert eng.waiting_captcha
+    _t.sleep(0.5)
+    assert eng.running                      # sigue esperando, sin terminar ni descartar nada
+    eng.resume()
+    eng._thread.join(20)
+    evs = []
+    while not events.empty():
+        evs.append(events.get())
+    assert any(e[0] == "captcha" and "B0CAPTCHA1" in e[1] for e in evs)
+    rows = {e[1]["asin"]: e[1]["status"] for e in evs if e[0] == "row"}
+    assert rows == {"B0CAPTCHA1": "ok", "B0NORMAL02": "ok"}

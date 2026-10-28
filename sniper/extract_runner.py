@@ -67,6 +67,7 @@ class ExtractRun:
         # una lista ya completa se rehace desde cero; una a medias se reanuda
         reset = is_complete(self.key)
         crawler.set_log_sink(lambda line: self.events.put(("log", "[lista] " + line)))
+        crawler.set_alert_sink(lambda msg: self.events.put(("captcha_extract", "[lista] " + msg)))
         self._thread = threading.Thread(target=self._run, args=(reset,), name="extractor", daemon=True)
         self._thread.start()
 

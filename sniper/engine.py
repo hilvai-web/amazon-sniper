@@ -25,7 +25,7 @@ import certifi
 
 from . import telegram
 from .amazon_api import MAX_ITEMS as API_MAX_ITEMS
-from .amazon_api import ApiError, CreatorsApi
+from .amazon_api import ApiError, CreatorsApi, consultar_via_api_afiliados
 from .config import MARKETPLACES, Settings, app_dir
 from .db import Database
 from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_captcha,
@@ -135,6 +135,7 @@ class ScanEngine:
             self.api = CreatorsApi(settings.api_client_id, settings.api_client_secret,
                                    settings.api_partner_tag, settings.timeout)
         self._web_only: set[tuple[str, str]] = set()   # lo que la API no pudo dar
+        self.waiting_captcha = False    # parado hasta que el usuario resuelva el captcha
         self.api_done = 0
 
     # ------------------------------------------------------------ control
@@ -144,6 +145,15 @@ class ScanEngine:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def resume(self) -> None:
+        """El usuario ha resuelto el captcha: se sigue donde se quedó."""
+        if self.waiting_captcha:
+            self.waiting_captcha = False
+            self._block_streak = 0
+            self._resume_at = 0.0
+            self.identities.rotate()
+            self._log("Continuando el escaneo.")
 
     @property
     def running(self) -> bool:
@@ -257,6 +267,8 @@ class ScanEngine:
             # _main cancela a los workers cuando la cola queda vacía y procesada
             asin, market, tries = await jobs.get()
             try:
+                while self.waiting_captcha and not self._stop.is_set():
+                    await asyncio.sleep(0.5)
                 wait = self._resume_at - time.time()
                 if wait > 0:
                     await self._sleep(wait)
@@ -269,6 +281,11 @@ class ScanEngine:
                     if exc.proxy:
                         # con proxies, un bloqueo solo afecta a ese proxy: se cambia y se reintenta
                         self._drop_proxy(exc.proxy, f"Amazon lo bloquea: {exc}", now=True)
+                    elif self.s.captcha_pause:
+                        # se para todo hasta que lo resuelvas; el producto se reintenta sin gastar intento
+                        self._ask_captcha(asin, market, str(exc))
+                        jobs.put_nowait((asin, market, tries))
+                        continue
                     else:
                         self._on_block(str(exc))
                     if tries < MAX_RETRIES or (exc.proxy and tries < MAX_RETRIES + 3):
@@ -283,6 +300,15 @@ class ScanEngine:
                 await self._sleep(random.uniform(self.s.delay_min, max(self.s.delay_min, self.s.delay_max)))
             finally:
                 jobs.task_done()
+
+    def _ask_captcha(self, asin: str, market: str, reason: str) -> None:
+        if self.waiting_captcha:
+            return
+        self.waiting_captcha = True
+        url = f"https://{MARKETPLACES[market][0]}/dp/{asin}"
+        self._log(f"[!] Amazon ha solicitado verificación ({reason}). Resuélvela en el navegador "
+                  "y pulsa «Continuar».")
+        self._emit("captcha", url)
 
     def _on_block(self, reason: str) -> None:
         """Backoff exponencial global: 30 s, 60 s, 120 s ... máx. 10 min."""
@@ -395,7 +421,7 @@ class ScanEngine:
                     jobs.put_nowait(job)
                 mine = [j for j in mine if j[1] == market]
                 try:
-                    results = await self.api.get_items(session, [a for a, _, _ in mine], market)
+                    results = await consultar_via_api_afiliados(self.api, session, [a for a, _, _ in mine], market)
                     backoff = 0.0
                 except (ApiError, aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
                     for job in mine:

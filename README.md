@@ -92,7 +92,8 @@ Con la API activada, la API y la web se reparten la cola de amazon.es: la API co
 
 ## Velocidad, bloqueos y límites (léelo)
 
-- **Velocidad**: con los valores por defecto (4 peticiones simultáneas, 2–5 s de pausa) son unas 3.000 consultas por hora. Subir la concurrencia acelera, pero Amazon empieza a responder con captchas.
+- **Velocidad**: con los valores por defecto (2 peticiones simultáneas, 5–10 s de pausa) son unas 800 consultas por hora. Subir la concurrencia acelera, pero Amazon empieza a responder con captchas.
+- **Captcha**: con *Si sale captcha, parar y avisarme* (por defecto) el escaneo se para, suena un aviso, se abre el producto en tu navegador y aparece el botón amarillo *Ya lo he resuelto: continuar*; el producto se reintenta y sigue el bloque. El extractor de listas abre su propia ventana del navegador con el captcha y, en cuanto lo resuelves, continúa solo con esas cookies.
 - **Resiliencia, no invisibilidad**: la app rota el User-Agent cada 10 productos, admite una lista de **tus propios proxies** (archivo `.txt`), detecta captchas/503 y aplica pausas exponenciales (30 s → 10 min) cambiando de identidad. Nada de esto garantiza que Amazon no limite tu IP; si ves muchos "bloqueado", baja la concurrencia o sube la pausa.
 - **No incluye** listas automáticas de proxies públicos gratuitos ni suplantación de huella TLS. Los proxies públicos suelen ser lentos, estar ya vetados por Amazon y pueden leer o alterar tu tráfico; y la evasión activa de los sistemas antibots no es algo que vaya a construir. Tampoco consulta Keepa ni CamelCamelCamel: sus condiciones prohíben el scraping (Keepa tiene API oficial de pago); el histórico local cumple esa función.
 - **Términos de servicio**: las Condiciones de Uso de Amazon no permiten la extracción automatizada. Úsala a ritmo moderado, para uso personal, y asume ese riesgo. Un "error de precio" no obliga al vendedor a servir el pedido; Amazon suele cancelar esas compras.

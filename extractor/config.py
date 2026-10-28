@@ -113,7 +113,11 @@ MAX_SEARCH_PAGES = 20                            # páginas de resultados por b�
 # necesita descargar ningún navegador. None = Chromium propio de Playwright.
 BROWSER_CHANNELS = ["msedge", "chrome", None]
 HEADLESS = True              # False para ver el navegador mientras trabaja
-DELAY_RANGE = (2.0, 5.0)     # espera aleatoria entre páginas (segundos)
+DELAY_RANGE = (5.0, 10.0)    # espera aleatoria entre páginas (segundos)
+# Si sale captcha, abre una ventana visible del navegador para que lo resuelvas
+# tú; al resolverlo sigue solo, con las mismas cookies. False = esperar y reintentar.
+MANUAL_CAPTCHA = True
+MANUAL_CAPTCHA_MINUTES = 15  # tiempo máximo esperando a que lo resuelvas
 PAGE_TIMEOUT_MS = 45_000
 MAX_RETRIES = 2              # reintentos por página ante captcha/timeout
 MAX_CONSECUTIVE_FAILS = 4    # tras N páginas fallidas seguidas guarda y para

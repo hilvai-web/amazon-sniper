@@ -139,3 +139,17 @@ def _error_text(data: dict) -> str:
         first = errors[0]
         return f"{_get(first, 'code') or ''}: {_get(first, 'message') or ''}".strip(": ")
     return str(_get(data, "message") or "")
+
+
+async def consultar_via_api_afiliados(api: CreatorsApi | None, session: aiohttp.ClientSession,
+                                      asins: list[str], market: str = "ES") -> dict[str, ProductInfo]:
+    """Punto único de entrada a la API de Afiliados (Creators API, sucesora de PA-API 5).
+
+    Ya está conectada al motor (engine._api_lane): el "interruptor" es rellenar
+    en la app el ID de credencial, el secret y el ID de afiliado. Sin ellos
+    (api=None) devuelve {} y todo va por la web. Lo que devuelve pasa por la
+    misma lógica que la web: histórico en SQLite, filtros, Prime y Telegram.
+    """
+    if api is None:
+        return {}
+    return await api.get_items(session, asins, market)

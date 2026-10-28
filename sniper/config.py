@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 
 
 def app_dir() -> Path:
@@ -53,9 +53,9 @@ class Settings:
     min_discount: float = 50.0          # % mínimo para considerar error de precio
     max_price: float = 0.0              # 0 = sin límite
     markets: list[str] = field(default_factory=lambda: ["ES"])
-    concurrency: int = 4                # peticiones simultáneas máximas
-    delay_min: float = 2.0              # segundos entre peticiones (por worker)
-    delay_max: float = 5.0
+    concurrency: int = 2                # peticiones simultáneas máximas
+    delay_min: float = 5.0              # segundos entre peticiones (por worker)
+    delay_max: float = 10.0
     timeout: float = 20.0
     proxies_file: str = ""              # .txt opcional, un proxy por línea
     batch_size: int = 10                # ASINs por identidad (proxy + UA)
@@ -75,7 +75,8 @@ class Settings:
     api_client_secret: str = ""
     api_partner_tag: str = ""           # ID de afiliado de amazon.es (xxxx-21)
     api_interval: float = 1.1           # segundos entre peticiones a la API
-    settings_version: int = 2
+    captcha_pause: bool = True          # ante captcha/503: parar y esperar a que lo resuelvas
+    settings_version: int = 3
     lists_version: int = 2              # sube cuando cambia cómo se extraen las listas
 
     @classmethod
@@ -91,6 +92,12 @@ class Settings:
             if known.get("rescan_hours") == 6.0:
                 known["rescan_hours"] = 1.0
             known["settings_version"] = 2
+        if known.get("settings_version", 1) < 3:
+            # v2.6.0: ritmo más tranquilo por defecto (máx. 2 a la vez, 5-10 s entre fichas)
+            known["concurrency"] = min(int(known.get("concurrency", 2)), 2)
+            if (known.get("delay_min"), known.get("delay_max")) in ((2.0, 5.0), (None, None)):
+                known["delay_min"], known["delay_max"] = 5.0, 10.0
+            known["settings_version"] = 3
         return cls(**known)
 
     def save(self) -> None:

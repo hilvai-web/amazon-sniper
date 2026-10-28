@@ -146,6 +146,9 @@ class SniperApp(ctk.CTk):
         self.delay_entry = self._entry(side, "Pausa entre peticiones (s) min-max",
                                        f"{self.settings.delay_min:g}-{self.settings.delay_max:g}")
         self.rescan_entry = self._entry(side, "No re-escanear antes de (horas)", f"{self.settings.rescan_hours:g}")
+        self.captcha_var = tk.BooleanVar(value=self.settings.captcha_pause)
+        ctk.CTkCheckBox(side, text="Si sale captcha, parar y avisarme", variable=self.captcha_var,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(anchor="w", padx=16, pady=(6, 2))
         ctk.CTkButton(side, text="🌐 Cargar proxies (.txt, opcional)", fg_color="gray25", hover_color="gray30",
                       command=self._pick_proxy_file).pack(fill="x", padx=16, pady=4)
         self.proxy_label = ctk.CTkLabel(side, text=self._proxy_text(), text_color="gray70", wraplength=280)
@@ -174,6 +177,11 @@ class SniperApp(ctk.CTk):
         self._cycle_after: str | None = None
         self._user_stopped = False
 
+        # aparece solo cuando Amazon pide captcha
+        self.captcha_btn = ctk.CTkButton(actions, text="✅ Ya lo he resuelto: continuar", height=48,
+                                         fg_color="#f9a825", hover_color="#f57f17", text_color="black",
+                                         font=ctk.CTkFont(size=15, weight="bold"), command=self._resume_captcha)
+        self._captcha_bell: str | None = None
         self.start_btn = ctk.CTkButton(actions, text="▶  INICIAR SNIPER", height=64, fg_color=ACCENT,
                                        hover_color=ACCENT_HOVER, text_color="black",
                                        font=ctk.CTkFont(size=20, weight="bold"), command=self._start)
@@ -436,6 +444,7 @@ class SniperApp(ctk.CTk):
             messagebox.showerror(APP_NAME, "Revisa los valores numéricos de la configuración.")
             return False
         s.only_prime = bool(self.prime_var.get())
+        s.captcha_pause = bool(self.captcha_var.get())
         s.api_client_id = self.api_id_entry.get().strip()
         s.api_client_secret = self.api_secret_entry.get().strip()
         s.api_partner_tag = self.api_tag_entry.get().strip()
@@ -508,6 +517,7 @@ class SniperApp(ctk.CTk):
             self._reset_buttons("Detenido")
             return
         if self.engine:
+            self._hide_captcha()
             self.engine.stop()
             self.status_label.configure(text="Deteniendo…")
             self.stop_btn.configure(state="disabled")
@@ -589,7 +599,13 @@ class SniperApp(ctk.CTk):
                     self.stat_labels["total"].configure(text=f"{total:,}".replace(",", "."))
                     self.stat_labels["alerts"].configure(text=str(alerts))
                     self.progress.set(done / total if total else 0)
+                elif kind == "captcha":
+                    self._on_captcha(event[1])
+                elif kind == "captcha_extract":
+                    self._ring(3)
+                    self._log(event[1])
                 elif kind == "finished":
+                    self._hide_captcha()
                     self._on_finished(event[1])
                 elif kind == "extract_done":
                     self._on_extract_done(event[1], event[2])
@@ -600,6 +616,32 @@ class SniperApp(ctk.CTk):
         except queue.Empty:
             pass
         self.after(150 if handled else 300, self._poll_events)
+
+    # ---------------------------------------------------------- captcha
+    def _on_captcha(self, url: str) -> None:
+        self.captcha_btn.pack(fill="x", padx=16, pady=(12, 0), before=self.start_btn)
+        self.status_label.configure(text="⏸ Esperando a que resuelvas el captcha")
+        webbrowser.open(url)
+        self._ring(3)
+
+    def _ring(self, times: int) -> None:
+        """Pitido del sistema (y lo repite cada minuto mientras esté esperando)."""
+        for i in range(times):
+            self.after(i * 400, self.bell)
+        if self.captcha_btn.winfo_manager():     # botón visible: se sigue esperando
+            self._captcha_bell = self.after(60_000, lambda: self._ring(1))
+
+    def _resume_captcha(self) -> None:
+        self._hide_captcha()
+        if self.engine:
+            self.engine.resume()
+        self.status_label.configure(text="Escaneando…")
+
+    def _hide_captcha(self) -> None:
+        if self._captcha_bell:
+            self.after_cancel(self._captcha_bell)
+            self._captcha_bell = None
+        self.captcha_btn.pack_forget()
 
     def _add_row(self, row: dict) -> None:
         fmt = lambda v: f"{v:.2f} €".replace(".", ",") if v else "—"  # noqa: E731
