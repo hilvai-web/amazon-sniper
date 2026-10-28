@@ -139,6 +139,8 @@ class ScanEngine:
                                    settings.api_partner_tag, settings.timeout)
         self._web_only: set[tuple[str, str]] = set()   # lo que la API no pudo dar
         self.waiting_captcha = False    # parado hasta que el usuario resuelva el captcha
+        self._captcha_since = 0.0
+        self._captcha_streak = 0        # captchas seguidos sin un escaneo bueno entre medias
         self.api_done = 0
 
     # ------------------------------------------------------------ control
@@ -273,6 +275,7 @@ class ScanEngine:
             try:
                 while self.waiting_captcha and not self._stop.is_set():
                     await asyncio.sleep(0.5)
+                    self._maybe_auto_resume()
                 wait = self._resume_at - time.time()
                 if wait > 0:
                     await self._sleep(wait)
@@ -281,6 +284,7 @@ class ScanEngine:
                 try:
                     await self._scan_one(session, asin, market)
                     self._block_streak = 0
+                    self._captcha_streak = 0
                 except Blocked as exc:
                     if exc.proxy:
                         # con proxies, un bloqueo solo afecta a ese proxy: se cambia y se reintenta
@@ -310,15 +314,32 @@ class ScanEngine:
         if self.waiting_captcha:
             return
         self.waiting_captcha = True
+        self._captcha_since = time.monotonic()
+        self._captcha_streak += 1
         url = f"https://{MARKETPLACES[market][0]}/dp/{asin}"
         form = parse_captcha_form(exc.html, exc.url) if exc and exc.html else None
         by_telegram = bool(form and session and self.s.telegram_token and self.s.telegram_chat_id)
+        auto = self.captcha_auto_wait()
         self._log(f"[!] Amazon ha solicitado verificación ({reason}). "
                   + ("Te la he mandado a Telegram: contesta allí, o " if by_telegram else "")
-                  + "resuélvela en el navegador y pulsa «Continuar».")
+                  + "resuélvela en el navegador y pulsa «Continuar»"
+                  + (f"; si no, sigo solo en {auto / 60:.0f} min." if auto else "."))
         self._emit("captcha", url)
         if by_telegram:
             asyncio.get_running_loop().create_task(self._telegram_captcha(session, exc, form, market))
+
+    def captcha_auto_wait(self) -> float:
+        """Segundos hasta seguir solo: 5, 10, 20 min... (máx. 1 h) si Amazon insiste."""
+        if self.s.captcha_auto_minutes <= 0:
+            return 0.0
+        return min(3600.0, self.s.captcha_auto_minutes * 60 * 2 ** max(0, self._captcha_streak - 1))
+
+    def _maybe_auto_resume(self) -> None:
+        wait = self.captcha_auto_wait()
+        if wait and self.waiting_captcha and time.monotonic() - self._captcha_since >= wait:
+            self._log(f"Sin respuesta en {wait / 60:.0f} min: sigo solo con otra identidad.")
+            self.resume()
+            self._emit("captcha_solved")
 
     async def _telegram_captcha(self, session: aiohttp.ClientSession, exc: Blocked,
                                 form: dict, market: str) -> None:

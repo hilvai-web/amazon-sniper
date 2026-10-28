@@ -486,3 +486,24 @@ def test_captcha_solved_via_telegram(tmp_path, monkeypatch):
     assert ("captcha_solved",) in evs
     assert len(submitted) == 2 and "amzn=tok123" in submitted[0]
     assert [k for k, _ in sent] == ["photo", "photo", "text"] and "Sigo escaneando" in sent[-1][1]
+
+
+def test_captcha_auto_resume(tmp_path):
+    calls = {"n": 0}
+
+    async def fetch(session, url, headers, proxy, timeout):
+        calls["n"] += 1
+        return 200, CAPTCHA if calls["n"] <= 2 else PAGE.format(price="180,00 €", lp="199,00 €")
+
+    s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
+                 captcha_auto_minutes=0.01)          # 0,6 s; la segunda vez 1,2 s
+    events = queue.Queue()
+    eng = ScanEngine(s, ["B0CAPTCHA1"], Database(tmp_path / "t.db"), events, fetcher=fetch)
+    eng.start(); eng._thread.join(20)
+    evs = []
+    while not events.empty():
+        evs.append(events.get())
+    assert [e[0] for e in evs].count("captcha") == 2
+    assert {e[1]["asin"]: e[1]["status"] for e in evs if e[0] == "row"} == {"B0CAPTCHA1": "ok"}
+    assert any("sigo solo" in e[1] for e in evs if e[0] == "log")
+    assert eng._captcha_streak == 0

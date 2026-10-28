@@ -149,6 +149,8 @@ class SniperApp(ctk.CTk):
         self.captcha_var = tk.BooleanVar(value=self.settings.captcha_pause)
         ctk.CTkCheckBox(side, text="Si sale captcha, parar y avisarme", variable=self.captcha_var,
                         fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(anchor="w", padx=16, pady=(6, 2))
+        self.captcha_auto_entry = self._entry(side, "Si no respondo al captcha, seguir solo tras (min) · 0 = nunca",
+                                              f"{self.settings.captcha_auto_minutes:g}")
         ctk.CTkButton(side, text="🌐 Cargar proxies (.txt, opcional)", fg_color="gray25", hover_color="gray30",
                       command=self._pick_proxy_file).pack(fill="x", padx=16, pady=4)
         self.proxy_label = ctk.CTkLabel(side, text=self._proxy_text(), text_color="gray70", wraplength=280)
@@ -440,6 +442,7 @@ class SniperApp(ctk.CTk):
             s.delay_max = max(s.delay_min, float(hi or lo or 0))
             s.rescan_hours = max(0.0, float(self.rescan_entry.get().replace(",", ".") or 0))
             s.min_value = max(0.0, float(self.minvalue_entry.get().replace(",", ".") or 0))
+            s.captcha_auto_minutes = max(0.0, float(self.captcha_auto_entry.get().replace(",", ".") or 0))
         except ValueError:
             messagebox.showerror(APP_NAME, "Revisa los valores numéricos de la configuración.")
             return False
