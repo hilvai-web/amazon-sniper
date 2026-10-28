@@ -39,6 +39,7 @@ PACE_MAX = 6.0              # como mucho, 6 veces la pausa configurada
 SLOW_SECONDS = 6.0          # una ficha que tarda más que esto = Amazon va lento
 CAPTCHA_WAIT_SECONDS = 15 * 60      # tiempo máximo esperando tu respuesta en Telegram
 CAPTCHA_MAX_TRIES = 5
+CAPTCHA_SILENT_RETRIES = 3          # "continuar" automáticos antes de avisarte
 API_MARKETS = {"ES"}        # el ID de afiliado es de amazon.es
 PROXY_TEST_URL = "https://www.amazon.es/"
 
@@ -325,14 +326,21 @@ class ScanEngine:
         self._captcha_since = time.monotonic()
         self._captcha_streak += 1
         url = f"https://{MARKETPLACES[market][0]}/dp/{asin}"
+        auto = self.captcha_auto_wait()
+        # los primeros captchas seguidos se intentan continuar solos, sin molestarte
+        silent = bool(auto) and self._captcha_streak <= CAPTCHA_SILENT_RETRIES
+        if silent:
+            self._log(f"Amazon pide verificación ({reason}). Intento {self._captcha_streak} de "
+                      f"{CAPTCHA_SILENT_RETRIES} de continuar solo en {auto:.0f} s.")
+            self._emit("captcha", url, True)
+            return
         form = parse_captcha_form(exc.html, exc.url) if exc and exc.html else None
         by_telegram = bool(form and session and self.s.telegram_token and self.s.telegram_chat_id)
-        auto = self.captcha_auto_wait()
-        self._log(f"[!] Amazon ha solicitado verificación ({reason}). "
+        self._log(f"[!] Amazon sigue pidiendo verificación tras {CAPTCHA_SILENT_RETRIES} intentos ({reason}). "
                   + ("Te la he mandado a Telegram: contesta allí, o " if by_telegram else "")
                   + "resuélvela en el navegador y pulsa «Continuar»"
                   + (f"; si no, reintento solo en {auto:.0f} s." if auto else "."))
-        self._emit("captcha", url)
+        self._emit("captcha", url, False)
         if by_telegram:
             asyncio.get_running_loop().create_task(self._telegram_captcha(session, exc, form, market))
 

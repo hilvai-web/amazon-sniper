@@ -654,7 +654,7 @@ class SniperApp(ctk.CTk):
                     self.stat_labels["alerts"].configure(text=str(alerts))
                     self.progress.set(done / total if total else 0)
                 elif kind == "captcha":
-                    self._on_captcha(event[1])
+                    self._on_captcha(event[1], quiet=len(event) > 2 and event[2])
                 elif kind == "captcha_solved":
                     self._hide_captcha()
                     self.status_label.configure(text="Escaneando…")
@@ -675,8 +675,11 @@ class SniperApp(ctk.CTk):
         self.after(150 if handled else 300, self._poll_events)
 
     # ---------------------------------------------------------- captcha
-    def _on_captcha(self, url: str) -> None:
+    def _on_captcha(self, url: str, quiet: bool = False) -> None:
         self.captcha_btn.pack(fill="x", padx=16, pady=(12, 0), before=self.start_btn)
+        if quiet:   # reintento automático: sin abrir el navegador ni pitar
+            self.status_label.configure(text="⏸ Captcha: continuando solo…")
+            return
         self.status_label.configure(text="⏸ Esperando a que resuelvas el captcha")
         webbrowser.open(url)
         self._ring(3)

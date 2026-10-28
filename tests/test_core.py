@@ -436,7 +436,7 @@ def test_captcha_solved_via_telegram(tmp_path, monkeypatch):
     import asyncio
     from sniper import engine as engmod
     sent, replies, submitted = [], ["xx", "abc def"], []
-    state = {"solved": False, "first": True}
+    state = {"solved": False, "blocked": 4}      # 3 "continuar" solos fallan; el 4.º va a Telegram
 
     async def fetch(session, url, headers, proxy, timeout):
         if "validateCaptcha" in url:
@@ -445,8 +445,8 @@ def test_captcha_solved_via_telegram(tmp_path, monkeypatch):
                 state["solved"] = True
                 return 200, PAGE.format(price="180,00 €", lp="199,00 €")
             return 200, CAPTCHA_FORM
-        if state["first"]:
-            state["first"] = False
+        if state["blocked"]:
+            state["blocked"] -= 1
             return 200, CAPTCHA_FORM
         assert state["solved"], "no debe seguir escaneando hasta resolver el captcha"
         return 200, PAGE.format(price="180,00 €", lp="199,00 €")
@@ -474,7 +474,7 @@ def test_captcha_solved_via_telegram(tmp_path, monkeypatch):
     monkeypatch.setattr(engmod.ScanEngine, "_fetch_bytes", fetch_bytes)
 
     s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
-                 telegram_token="T", telegram_chat_id="42")
+                 telegram_token="T", telegram_chat_id="42", captcha_retry_first=0.1, captcha_retry_every=1.0)
     events = queue.Queue()
     eng = ScanEngine(s, ["B0CAPTCHA1", "B0NORMAL02"], Database(tmp_path / "t.db"), events, fetcher=fetch)
     eng.start(); eng._thread.join(20)
@@ -484,6 +484,8 @@ def test_captcha_solved_via_telegram(tmp_path, monkeypatch):
     rows = {e[1]["asin"]: e[1]["status"] for e in evs if e[0] == "row"}
     assert rows == {"B0CAPTCHA1": "ok", "B0NORMAL02": "ok"}
     assert ("captcha_solved",) in evs
+    quiet = [e[2] for e in evs if e[0] == "captcha"]
+    assert quiet == [True, True, True, False]       # solo el 4.º avisa
     assert len(submitted) == 2 and "amzn=tok123" in submitted[0]
     assert [k for k, _ in sent] == ["photo", "photo", "text"] and "Sigo escaneando" in sent[-1][1]
 

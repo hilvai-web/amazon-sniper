@@ -86,7 +86,7 @@ Con **🔁 Escaneo continuo** marcado (por defecto), al terminar una vuelta la a
 
 Desde la app, sección *Segundo plano*: **Arrancar oculto al iniciar Windows** crea la tarea «Amazon Sniper (segundo plano)» en el Programador de tareas (o, si Windows no deja, un acceso directo en la carpeta Inicio); **Arrancar oculto ahora**; **Parar el oculto y quitarlo del arranque**; **Ver ejecucion.log**.
 
-Autorregulación: si una ficha tarda más de 6 s, falla la red o Amazon responde 503/429 sin captcha, la pausa entre fichas se multiplica por 1,5 (hasta x6) y cada ficha rápida la va relajando hasta la normal. Solo un captcha de verdad para el escaneo: avisa por Telegram y reintenta solo a los 10 s y luego cada minuto.
+Autorregulación: si una ficha tarda más de 6 s, falla la red o Amazon responde 503/429 sin captcha, la pausa entre fichas se multiplica por 1,5 (hasta x6) y cada ficha rápida la va relajando hasta la normal. Solo un captcha de verdad para el escaneo: los 3 primeros seguidos los intenta continuar sola en silencio (a los 10 s y luego cada minuto); si al tercero sigue bloqueada, avisa por Telegram y sigue reintentando cada minuto.
 
 ## Proxies
 

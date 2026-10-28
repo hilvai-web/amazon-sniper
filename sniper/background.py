@@ -82,7 +82,10 @@ def _drain(events: "queue.Queue[tuple]", counters: dict) -> None:
                 log.warning("%s %s %s %.2f € -%.0f%% %s", row["status"], row["asin"], row["market"],
                             row["price"] or 0, row["discount"], row["title"][:80])
         elif kind == "captcha":
-            log.warning("Captcha de Amazon en %s: aviso por Telegram y reintento automático.", event[1])
+            if len(event) > 2 and event[2]:
+                log.info("Captcha de Amazon en %s: continúo solo.", event[1])
+            else:
+                log.warning("Captcha de Amazon en %s tras varios intentos: aviso por Telegram.", event[1])
         elif kind == "captcha_extract":
             log.warning(event[1])
         elif kind == "finished":
