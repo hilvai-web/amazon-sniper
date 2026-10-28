@@ -6,6 +6,7 @@ import html
 import aiohttp
 
 API = "https://api.telegram.org/bot{token}/sendMessage"
+BASE = "https://api.telegram.org/bot{token}/"
 
 
 def format_alert(title: str | None, asin: str, market: str, price: float,
@@ -39,3 +40,36 @@ async def send_message(session: aiohttp.ClientSession, token: str, chat_id: str,
             return False, f"HTTP {resp.status}: {body[:200]}"
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
+
+
+async def send_photo(session: aiohttp.ClientSession, token: str, chat_id: str,
+                     photo: bytes, caption: str) -> bool:
+    form = aiohttp.FormData()
+    form.add_field("chat_id", str(chat_id))
+    form.add_field("caption", caption)
+    form.add_field("photo", photo, filename="captcha.jpg", content_type="image/jpeg")
+    try:
+        async with session.post(BASE.format(token=token) + "sendPhoto", data=form,
+                                timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            return resp.status == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def get_updates(session: aiohttp.ClientSession, token: str, offset: int,
+                      wait: int = 25) -> list[dict]:
+    """Mensajes nuevos que ha recibido el bot (espera hasta `wait` s si no hay)."""
+    try:
+        async with session.get(BASE.format(token=token) + "getUpdates",
+                               params={"offset": offset, "timeout": wait, "allowed_updates": '["message"]'},
+                               timeout=aiohttp.ClientTimeout(total=wait + 10)) as resp:
+            data = await resp.json(content_type=None)
+            return data.get("result", []) if data.get("ok") else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+async def next_offset(session: aiohttp.ClientSession, token: str) -> int:
+    """Offset para leer solo los mensajes que lleguen a partir de ahora."""
+    updates = await get_updates(session, token, -1, wait=0)
+    return updates[-1]["update_id"] + 1 if updates else 0

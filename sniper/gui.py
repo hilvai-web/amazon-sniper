@@ -601,6 +601,9 @@ class SniperApp(ctk.CTk):
                     self.progress.set(done / total if total else 0)
                 elif kind == "captcha":
                     self._on_captcha(event[1])
+                elif kind == "captcha_solved":
+                    self._hide_captcha()
+                    self.status_label.configure(text="Escaneando…")
                 elif kind == "captcha_extract":
                     self._ring(3)
                     self._log(event[1])

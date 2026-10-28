@@ -18,6 +18,7 @@ import ssl
 import threading
 import time
 import unicodedata
+from urllib.parse import urlencode
 from typing import Awaitable, Callable
 
 import aiohttp
@@ -29,11 +30,13 @@ from .amazon_api import ApiError, CreatorsApi, consultar_via_api_afiliados
 from .config import MARKETPLACES, Settings, app_dir
 from .db import Database
 from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_captcha,
-                      offers_url, parse_offers, parse_product, USER_AGENTS)
+                      offers_url, parse_captcha_form, parse_offers, parse_product, USER_AGENTS)
 
 Fetcher = Callable[[aiohttp.ClientSession, str, dict, str | None, float], Awaitable[tuple[int, str]]]
 
 MAX_RETRIES = 2
+CAPTCHA_WAIT_SECONDS = 15 * 60      # tiempo máximo esperando tu respuesta en Telegram
+CAPTCHA_MAX_TRIES = 5
 API_MARKETS = {"ES"}        # el ID de afiliado es de amazon.es
 PROXY_TEST_URL = "https://www.amazon.es/"
 
@@ -146,13 +149,14 @@ class ScanEngine:
     def stop(self) -> None:
         self._stop.set()
 
-    def resume(self) -> None:
+    def resume(self, rotate: bool = True) -> None:
         """El usuario ha resuelto el captcha: se sigue donde se quedó."""
         if self.waiting_captcha:
             self.waiting_captcha = False
             self._block_streak = 0
             self._resume_at = 0.0
-            self.identities.rotate()
+            if rotate:
+                self.identities.rotate()
             self._log("Continuando el escaneo.")
 
     @property
@@ -283,7 +287,7 @@ class ScanEngine:
                         self._drop_proxy(exc.proxy, f"Amazon lo bloquea: {exc}", now=True)
                     elif self.s.captcha_pause:
                         # se para todo hasta que lo resuelvas; el producto se reintenta sin gastar intento
-                        self._ask_captcha(asin, market, str(exc))
+                        self._ask_captcha(asin, market, str(exc), session, exc)
                         jobs.put_nowait((asin, market, tries))
                         continue
                     else:
@@ -301,14 +305,84 @@ class ScanEngine:
             finally:
                 jobs.task_done()
 
-    def _ask_captcha(self, asin: str, market: str, reason: str) -> None:
+    def _ask_captcha(self, asin: str, market: str, reason: str,
+                     session: aiohttp.ClientSession | None = None, exc: Blocked | None = None) -> None:
         if self.waiting_captcha:
             return
         self.waiting_captcha = True
         url = f"https://{MARKETPLACES[market][0]}/dp/{asin}"
-        self._log(f"[!] Amazon ha solicitado verificación ({reason}). Resuélvela en el navegador "
-                  "y pulsa «Continuar».")
+        form = parse_captcha_form(exc.html, exc.url) if exc and exc.html else None
+        by_telegram = bool(form and session and self.s.telegram_token and self.s.telegram_chat_id)
+        self._log(f"[!] Amazon ha solicitado verificación ({reason}). "
+                  + ("Te la he mandado a Telegram: contesta allí, o " if by_telegram else "")
+                  + "resuélvela en el navegador y pulsa «Continuar».")
         self._emit("captcha", url)
+        if by_telegram:
+            asyncio.get_running_loop().create_task(self._telegram_captcha(session, exc, form, market))
+
+    async def _telegram_captcha(self, session: aiohttp.ClientSession, exc: Blocked,
+                                form: dict, market: str) -> None:
+        """Manda el captcha a Telegram, espera tu respuesta y se la envía a Amazon
+        con la misma sesión (cookies y User-Agent) que estaba escaneando."""
+        token, chat = self.s.telegram_token, self.s.telegram_chat_id
+        headers = build_headers(exc.ua or random.choice(USER_AGENTS), MARKETPLACES[market][1])
+        try:
+            offset = await telegram.next_offset(session, token)
+            for attempt in range(1, CAPTCHA_MAX_TRIES + 1):
+                if not self.waiting_captcha or self._stop.is_set():
+                    return
+                note = "" if attempt == 1 else "❌ No ha valido, aquí va otro.\n"
+                image = await self._fetch_bytes(session, form["image"], headers) if form["image"] else None
+                if image and form["text_field"]:
+                    sent = await telegram.send_photo(session, token, chat, image,
+                                                     f"{note}🔐 Amazon pide verificación ({market}). "
+                                                     "Responde con las letras de la imagen.")
+                else:
+                    sent, _ = await telegram.send_message(session, token, chat,
+                                                          f"{note}🔐 Amazon pide confirmar que eres una persona "
+                                                          f"({market}). Responde <b>ok</b> para continuar.")
+                if not sent:
+                    self._log("No pude mandar el captcha a Telegram; resuélvelo en el navegador.")
+                    return
+                answer, offset = await self._wait_reply(session, token, chat, offset)
+                if answer is None:
+                    return          # sin respuesta a tiempo, o ya resuelto desde la app
+                params = dict(form["fields"])
+                if form["text_field"]:
+                    params[form["text_field"]] = answer.strip().replace(" ", "").upper()
+                status, html = await self.fetcher(session, form["action"] + "?" + urlencode(params),
+                                                  headers, None, self.s.timeout)
+                if status == 200 and not is_captcha(html):
+                    await telegram.send_message(session, token, chat, "✅ Captcha resuelto. Sigo escaneando.")
+                    self._log("Captcha resuelto desde Telegram.")
+                    self.resume(rotate=False)      # mismas cookies y User-Agent: los ya validados
+                    self._emit("captcha_solved")
+                    return
+                form = parse_captcha_form(html, form["action"]) or form
+            await telegram.send_message(session, token, chat,
+                                        "Demasiados intentos. Resuélvelo en el navegador y pulsa «Continuar» en la app.")
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
+            self._log(f"Captcha por Telegram falló ({type(err).__name__}); resuélvelo en el navegador.")
+
+    async def _fetch_bytes(self, session: aiohttp.ClientSession, url: str, headers: dict) -> bytes | None:
+        try:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                return await resp.read() if resp.status == 200 else None
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            return None
+
+    async def _wait_reply(self, session: aiohttp.ClientSession, token: str, chat: str,
+                          offset: int) -> tuple[str | None, int]:
+        """Primer mensaje de texto de tu chat. (None, offset) si pasa el tiempo
+        o si ya lo has resuelto con el botón de la app."""
+        deadline = time.monotonic() + CAPTCHA_WAIT_SECONDS
+        while self.waiting_captcha and not self._stop.is_set() and time.monotonic() < deadline:
+            for update in await telegram.get_updates(session, token, offset):
+                offset = update["update_id"] + 1
+                msg = update.get("message") or {}
+                if str((msg.get("chat") or {}).get("id")) == str(chat) and msg.get("text"):
+                    return msg["text"], offset
+        return None, offset
 
     def _on_block(self, reason: str) -> None:
         """Backoff exponencial global: 30 s, 60 s, 120 s ... máx. 10 min."""
@@ -333,7 +407,7 @@ class ScanEngine:
         if proxy and time.monotonic() - start > self.s.proxy_max_seconds:
             self._drop_proxy(proxy, "muy lento")
         if status in (503, 429, 403):
-            raise Blocked(f"HTTP {status}", proxy)
+            raise Blocked(f"HTTP {status}", proxy, html=html, url=url, ua=ua)
         if status == 404:
             self.identities.report_success(proxy)
             self.db.record_scan(asin, market, None, None, None)
@@ -347,7 +421,7 @@ class ScanEngine:
         if info.status == "no_price":
             save_debug_page(html, asin, market)
         if info.status == "captcha":
-            raise Blocked("captcha", proxy)
+            raise Blocked("captcha", proxy, html=html, url=url, ua=ua)
         self.identities.report_success(proxy)
         if info.other_offers and (info.price is None or self.s.only_prime):
             await self._fill_from_offers(session, info, ua, lang, proxy, timeout)

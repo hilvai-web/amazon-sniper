@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "2.6.0"
+APP_VERSION = "2.7.0"
 
 
 def app_dir() -> Path:

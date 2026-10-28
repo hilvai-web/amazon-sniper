@@ -88,9 +88,34 @@ class ProductInfo:
 class Blocked(Exception):
     """Amazon devolvió captcha o 503: hay que frenar (o cambiar de proxy)."""
 
-    def __init__(self, msg: str, proxy: str | None = None):
+    def __init__(self, msg: str, proxy: str | None = None, html: str = "", url: str = "", ua: str = ""):
         super().__init__(msg)
         self.proxy = proxy
+        self.html, self.url, self.ua = html, url, ua
+
+
+def parse_captcha_form(html: str, page_url: str) -> dict | None:
+    """Formulario del captcha de Amazon: a dónde se envía, campos ocultos, imagen
+    y nombre del campo donde van las letras (None si es solo un botón)."""
+    from urllib.parse import urljoin
+    soup = BeautifulSoup(html, _PARSER)
+    form = soup.select_one('form[action*="validateCaptcha"]') or soup.select_one("form")
+    if form is None:
+        return None
+    fields, text_field = {}, None
+    for node in form.select("input"):
+        name = node.get("name")
+        if not name:
+            continue
+        if (node.get("type") or "text").lower() == "hidden":
+            fields[name] = node.get("value", "")
+        elif (node.get("type") or "text").lower() == "text":
+            text_field = name
+    img = form.select_one("img[src]") or soup.select_one('img[src*="captcha"]')
+    return {"action": urljoin(page_url, form.get("action") or page_url),
+            "method": (form.get("method") or "get").lower(),
+            "fields": fields, "text_field": text_field,
+            "image": urljoin(page_url, img["src"]) if img else None}
 
 
 def load_asins(path: str | Path) -> list[str]:

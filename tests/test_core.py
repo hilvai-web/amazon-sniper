@@ -414,3 +414,75 @@ def test_captcha_pause_and_resume(tmp_path):
     assert any(e[0] == "captcha" and "B0CAPTCHA1" in e[1] for e in evs)
     rows = {e[1]["asin"]: e[1]["status"] for e in evs if e[0] == "row"}
     assert rows == {"B0CAPTCHA1": "ok", "B0NORMAL02": "ok"}
+
+
+CAPTCHA_FORM = """<html><body><h4>Introduce los caracteres que aparecen a continuación</h4>
+<form method="get" action="/errors/validateCaptcha">
+<input type="hidden" name="amzn" value="tok123"><input type="hidden" name="amzn-r" value="&#047;dp&#047;B0CAPTCHA1">
+<img src="https://images-na.ssl-images-amazon.com/captcha/abc/Captcha_xyz.jpg">
+<input autocomplete="off" type="text" id="captchacharacters" name="field-keywords">
+<button type="submit">Seguir comprando</button></form></body></html>"""
+
+
+def test_captcha_form_parse():
+    from sniper.scraper import parse_captcha_form
+    form = parse_captcha_form(CAPTCHA_FORM, "https://www.amazon.es/dp/B0CAPTCHA1")
+    assert form["action"] == "https://www.amazon.es/errors/validateCaptcha"
+    assert form["fields"] == {"amzn": "tok123", "amzn-r": "/dp/B0CAPTCHA1"}
+    assert form["text_field"] == "field-keywords" and form["image"].endswith("Captcha_xyz.jpg")
+
+
+def test_captcha_solved_via_telegram(tmp_path, monkeypatch):
+    import asyncio
+    from sniper import engine as engmod
+    sent, replies, submitted = [], ["xx", "abc def"], []
+    state = {"solved": False, "first": True}
+
+    async def fetch(session, url, headers, proxy, timeout):
+        if "validateCaptcha" in url:
+            submitted.append(url)
+            if "field-keywords=ABCDEF" in url:
+                state["solved"] = True
+                return 200, PAGE.format(price="180,00 €", lp="199,00 €")
+            return 200, CAPTCHA_FORM
+        if state["first"]:
+            state["first"] = False
+            return 200, CAPTCHA_FORM
+        assert state["solved"], "no debe seguir escaneando hasta resolver el captcha"
+        return 200, PAGE.format(price="180,00 €", lp="199,00 €")
+
+    async def send_photo(session, token, chat, photo, caption):
+        sent.append(("photo", caption)); return True
+
+    async def send_message(session, token, chat, text):
+        sent.append(("text", text)); return True, "ok"
+
+    async def next_offset(session, token):
+        return 0
+
+    async def get_updates(session, token, offset, wait=25):
+        await asyncio.sleep(0.05)
+        if replies and len([x for x in sent if x[0] == "photo"]) > len(submitted):
+            return [{"update_id": offset, "message": {"chat": {"id": 42}, "text": replies.pop(0)}}]
+        return []
+
+    async def fetch_bytes(self, session, url, headers):
+        return b"jpg"
+    for name, fn in (("send_photo", send_photo), ("send_message", send_message),
+                     ("next_offset", next_offset), ("get_updates", get_updates)):
+        monkeypatch.setattr(engmod.telegram, name, fn)
+    monkeypatch.setattr(engmod.ScanEngine, "_fetch_bytes", fetch_bytes)
+
+    s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
+                 telegram_token="T", telegram_chat_id="42")
+    events = queue.Queue()
+    eng = ScanEngine(s, ["B0CAPTCHA1", "B0NORMAL02"], Database(tmp_path / "t.db"), events, fetcher=fetch)
+    eng.start(); eng._thread.join(20)
+    evs = []
+    while not events.empty():
+        evs.append(events.get())
+    rows = {e[1]["asin"]: e[1]["status"] for e in evs if e[0] == "row"}
+    assert rows == {"B0CAPTCHA1": "ok", "B0NORMAL02": "ok"}
+    assert ("captcha_solved",) in evs
+    assert len(submitted) == 2 and "amzn=tok123" in submitted[0]
+    assert [k for k, _ in sent] == ["photo", "photo", "text"] and "Sigo escaneando" in sent[-1][1]
