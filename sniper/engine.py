@@ -323,21 +323,21 @@ class ScanEngine:
         self._log(f"[!] Amazon ha solicitado verificación ({reason}). "
                   + ("Te la he mandado a Telegram: contesta allí, o " if by_telegram else "")
                   + "resuélvela en el navegador y pulsa «Continuar»"
-                  + (f"; si no, sigo solo en {auto / 60:.0f} min." if auto else "."))
+                  + (f"; si no, reintento solo en {auto:.0f} s." if auto else "."))
         self._emit("captcha", url)
         if by_telegram:
             asyncio.get_running_loop().create_task(self._telegram_captcha(session, exc, form, market))
 
     def captcha_auto_wait(self) -> float:
-        """Segundos hasta seguir solo: 5, 10, 20 min... (máx. 1 h) si Amazon insiste."""
-        if self.s.captcha_auto_minutes <= 0:
+        """Segundos hasta reintentar solo: 10 s la primera vez, luego cada minuto."""
+        if self.s.captcha_retry_every <= 0:
             return 0.0
-        return min(3600.0, self.s.captcha_auto_minutes * 60 * 2 ** max(0, self._captcha_streak - 1))
+        return self.s.captcha_retry_first if self._captcha_streak <= 1 else self.s.captcha_retry_every
 
     def _maybe_auto_resume(self) -> None:
         wait = self.captcha_auto_wait()
         if wait and self.waiting_captcha and time.monotonic() - self._captcha_since >= wait:
-            self._log(f"Sin respuesta en {wait / 60:.0f} min: sigo solo con otra identidad.")
+            self._log(f"Reintentando solo tras {wait:.0f} s, con otra identidad.")
             self.resume()
             self._emit("captcha_solved")
 

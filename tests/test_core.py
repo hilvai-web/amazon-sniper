@@ -496,7 +496,7 @@ def test_captcha_auto_resume(tmp_path):
         return 200, CAPTCHA if calls["n"] <= 2 else PAGE.format(price="180,00 €", lp="199,00 €")
 
     s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
-                 captcha_auto_minutes=0.01)          # 0,6 s; la segunda vez 1,2 s
+                 captcha_retry_first=0.3, captcha_retry_every=0.6)
     events = queue.Queue()
     eng = ScanEngine(s, ["B0CAPTCHA1"], Database(tmp_path / "t.db"), events, fetcher=fetch)
     eng.start(); eng._thread.join(20)
@@ -505,5 +505,6 @@ def test_captcha_auto_resume(tmp_path):
         evs.append(events.get())
     assert [e[0] for e in evs].count("captcha") == 2
     assert {e[1]["asin"]: e[1]["status"] for e in evs if e[0] == "row"} == {"B0CAPTCHA1": "ok"}
-    assert any("sigo solo" in e[1] for e in evs if e[0] == "log")
+    assert any("Reintentando solo" in e[1] for e in evs if e[0] == "log")
+    assert Settings().captcha_retry_first == 10 and Settings().captcha_retry_every == 60
     assert eng._captcha_streak == 0
