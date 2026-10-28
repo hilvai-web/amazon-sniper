@@ -80,6 +80,14 @@ pyinstaller --noconfirm --clean --onefile --noconsole --name AmazonSniper ^
 
 Con **🔁 Escaneo continuo** marcado (por defecto), al terminar una vuelta la app espera `cycle_pause_seconds` (60 s) y empieza otra. Cada vuelta revisa los productos que no se han mirado en la última hora (*No re-escanear antes de*; pon 0 para revisarlo todo siempre) y rehace la lista de la categoría si tiene más de 24 h. Si no queda nada pendiente, espera 10 minutos antes de volver a mirar. DETENER para el bucle.
 
+## Segundo plano (sin ventana)
+
+`AmazonSniper.exe --segundo-plano` escanea en bucle sin abrir ninguna ventana, con los ajustes guardados desde la app, y apunta todo en `ejecucion.log` junto al .exe (rota a los 2 MB, guarda 3 copias). `--una-vez` hace una sola vuelta y termina. Si ya hay una copia oculta funcionando, la nueva se cierra sola.
+
+Desde la app, sección *Segundo plano*: **Arrancar oculto al iniciar Windows** crea la tarea «Amazon Sniper (segundo plano)» en el Programador de tareas (o, si Windows no deja, un acceso directo en la carpeta Inicio); **Arrancar oculto ahora**; **Parar el oculto y quitarlo del arranque**; **Ver ejecucion.log**.
+
+Autorregulación: si una ficha tarda más de 6 s, falla la red o Amazon responde 503/429 sin captcha, la pausa entre fichas se multiplica por 1,5 (hasta x6) y cada ficha rápida la va relajando hasta la normal. Solo un captcha de verdad para el escaneo: avisa por Telegram y reintenta solo a los 10 s y luego cada minuto.
+
 ## Proxies
 
 Opcionales: un `.txt` con un proxy HTTP por línea (`IP:puerto`, `http://usuario:clave@host:puerto`; también vale `https://` o `IP puerto`). Al empezar cada vuelta la app prueba todos contra amazon.es y descarta los que no responden, tardan más de `proxy_max_seconds` (8 s) o reciben captcha/error. Durante el escaneo, un proxy que Amazon bloquea (captcha, 403, 503) sale al momento, y uno que falla o va lento dos veces, también. Si no queda ninguno, sigue con la conexión directa.

@@ -15,7 +15,7 @@ import customtkinter as ctk
 
 from .config import APP_NAME, APP_VERSION, DB_PATH, MARKETPLACES, Settings
 from .db import Database
-from . import extract_runner, updater
+from . import background, extract_runner, updater
 from .engine import ScanEngine
 from .scraper import load_asins, load_proxies
 
@@ -166,6 +166,20 @@ class SniperApp(ctk.CTk):
         self.api_tag_entry = self._entry(side, "ID de afiliado de amazon.es (…-21)", self.settings.api_partner_tag)
         ctk.CTkButton(side, text="Probar API", fg_color="gray25", hover_color="gray30",
                       command=self._test_api).pack(fill="x", padx=16, pady=4)
+
+        # --- Segundo plano (sin ventana, Programador de tareas)
+        self._section(side, "Segundo plano")
+        ctk.CTkLabel(side, text="Escanea oculto, sin esta ventana, y apunta todo en ejecucion.log. "
+                     "Usa los ajustes guardados aquí.", text_color="gray70", wraplength=280,
+                     justify="left").pack(fill="x", padx=16)
+        ctk.CTkButton(side, text="🕒 Arrancar oculto al iniciar Windows", fg_color="gray25", hover_color="gray30",
+                      command=self._bg_install).pack(fill="x", padx=16, pady=4)
+        ctk.CTkButton(side, text="▶ Arrancar oculto ahora", fg_color="gray25", hover_color="gray30",
+                      command=self._bg_start).pack(fill="x", padx=16, pady=4)
+        ctk.CTkButton(side, text="■ Parar el oculto y quitarlo del arranque", fg_color="gray25",
+                      hover_color="gray30", command=self._bg_remove).pack(fill="x", padx=16, pady=4)
+        ctk.CTkButton(side, text="📄 Ver ejecucion.log", fg_color="gray25", hover_color="gray30",
+                      command=self._bg_open_log).pack(fill="x", padx=16, pady=4)
 
         # --- Botones grandes
         ctk.CTkButton(side, text="Probar Telegram", fg_color="gray25", hover_color="gray30",
@@ -470,6 +484,11 @@ class SniperApp(ctk.CTk):
         self._user_stopped = False
         if not self._read_settings():
             return
+        if background.is_running_in_background():
+            if not messagebox.askyesno(APP_NAME, "Ya hay un escaneo oculto en segundo plano.\n"
+                                       "¿Lo paro y escaneo desde esta ventana?"):
+                return
+            background.stop_running()
         if not self.custom_file:
             key = self._category_key()
             age = extract_runner.list_age_hours(key)
@@ -547,6 +566,35 @@ class SniperApp(ctk.CTk):
             self.events.put(("log", "Telegram OK ✅" if ok else f"Telegram falló: {detail}"))
 
         threading.Thread(target=run, daemon=True).start()
+
+    # ------------------------------------------------------- segundo plano
+    def _bg_install(self) -> None:
+        if not self._read_settings():
+            return
+        self._log(background.install_autostart())
+
+    def _bg_start(self) -> None:
+        if not self._read_settings():
+            return
+        if self.engine and self.engine.running:
+            messagebox.showinfo(APP_NAME, "Detén primero el escaneo de esta ventana.")
+            return
+        if background.is_running_in_background():
+            self._log("Ya hay un escaneo oculto funcionando.")
+            return
+        background.start_now()
+        self._log("Escaneo oculto arrancado. Puedes cerrar esta ventana; mira ejecucion.log para ver qué hace.")
+
+    def _bg_remove(self) -> None:
+        stopped = background.stop_running()
+        self._log(background.remove_autostart()
+                  + (" Escaneo oculto parado." if stopped else " No había escaneo oculto funcionando."))
+
+    def _bg_open_log(self) -> None:
+        if background.LOG_FILE.exists():
+            webbrowser.open(background.LOG_FILE.as_uri())
+        else:
+            self._log("Aún no hay ejecucion.log: se crea al arrancar el modo oculto.")
 
     def _test_api(self) -> None:
         import asyncio

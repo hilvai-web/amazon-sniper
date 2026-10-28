@@ -508,3 +508,52 @@ def test_captcha_auto_resume(tmp_path):
     assert any("Reintentando solo" in e[1] for e in evs if e[0] == "log")
     assert Settings().captcha_retry_first == 10 and Settings().captcha_retry_every == 60
     assert eng._captcha_streak == 0
+
+
+def test_adaptive_pace(tmp_path):
+    calls = {"n": 0}
+
+    async def fetch(session, url, headers, proxy, timeout):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return 503, "<html>Disculpa las molestias</html>"   # frena, sin captcha
+        return 200, PAGE.format(price="180,00 €", lp="199,00 €")
+
+    s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0)
+    events = queue.Queue()
+    eng = ScanEngine(s, ["B0SLOW0001", "B0SLOW0002"], Database(tmp_path / "t.db"), events, fetcher=fetch)
+    eng._on_block = lambda reason: None
+    eng.start(); eng._thread.join(20)
+    evs = []
+    while not events.empty():
+        evs.append(events.get())
+    assert not any(e[0] == "captcha" for e in evs)          # un 503 no pide intervención
+    assert any("Amazon va lento" in e[1] for e in evs if e[0] == "log")
+    assert 1.0 < eng.pace < 2.25                             # subió x1,5 dos veces y se relaja
+    assert {e[1]["status"] for e in evs if e[0] == "row"} == {"ok"}
+
+
+def test_background_once(tmp_path, monkeypatch):
+    from sniper import background, engine as engmod
+
+    async def fetch(session, url, headers, proxy, timeout):
+        return 200, PAGE.format(price="9,99 €", lp="199,00 €")
+
+    class Eng(engmod.ScanEngine):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, fetcher=fetch, **kw)
+    lst = tmp_path / "mis.txt"
+    lst.write_text("B0BGTEST01\nB0BGTEST02\n")
+    s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
+                 last_asin_file=str(lst), min_discount=50)
+    for name, value in (("LOG_FILE", tmp_path / "ejecucion.log"), ("LOCK_FILE", tmp_path / "l.lock"),
+                        ("PID_FILE", tmp_path / "p.pid"), ("DB_PATH", tmp_path / "t.db")):
+        monkeypatch.setattr(background, name, value)
+    monkeypatch.setattr(engmod, "ScanEngine", Eng)
+    monkeypatch.setattr(background.Settings, "load", classmethod(lambda cls: s))
+    assert background.run(once=True) == 0
+    for h in list(background.log.handlers):
+        h.flush(); h.close(); background.log.removeHandler(h)
+    text = (tmp_path / "ejecucion.log").read_text(encoding="utf-8")
+    assert "Lista propia" in text and "Vuelta terminada: 2 productos mirados, 2 alertas" in text
+    assert "🚨 ERROR B0BGTEST01" in text and not (tmp_path / "p.pid").exists()

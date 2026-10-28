@@ -35,6 +35,8 @@ from .scraper import (Blocked, IdentityPool, ProductInfo, build_headers, is_capt
 Fetcher = Callable[[aiohttp.ClientSession, str, dict, str | None, float], Awaitable[tuple[int, str]]]
 
 MAX_RETRIES = 2
+PACE_MAX = 6.0              # como mucho, 6 veces la pausa configurada
+SLOW_SECONDS = 6.0          # una ficha que tarda más que esto = Amazon va lento
 CAPTCHA_WAIT_SECONDS = 15 * 60      # tiempo máximo esperando tu respuesta en Telegram
 CAPTCHA_MAX_TRIES = 5
 API_MARKETS = {"ES"}        # el ID de afiliado es de amazon.es
@@ -139,6 +141,7 @@ class ScanEngine:
                                    settings.api_partner_tag, settings.timeout)
         self._web_only: set[tuple[str, str]] = set()   # lo que la API no pudo dar
         self.waiting_captcha = False    # parado hasta que el usuario resuelva el captcha
+        self.pace = 1.0                 # multiplicador de la pausa entre fichas (autorregulado)
         self._captcha_since = 0.0
         self._captcha_streak = 0        # captchas seguidos sin un escaneo bueno entre medias
         self.api_done = 0
@@ -289,23 +292,28 @@ class ScanEngine:
                     if exc.proxy:
                         # con proxies, un bloqueo solo afecta a ese proxy: se cambia y se reintenta
                         self._drop_proxy(exc.proxy, f"Amazon lo bloquea: {exc}", now=True)
-                    elif self.s.captcha_pause:
-                        # se para todo hasta que lo resuelvas; el producto se reintenta sin gastar intento
+                    elif self.s.captcha_pause and str(exc) == "captcha":
+                        # captcha de verdad: se para todo hasta que lo resuelvas (o se reintenta solo);
+                        # el producto se reintenta sin gastar intento
                         self._ask_captcha(asin, market, str(exc), session, exc)
                         jobs.put_nowait((asin, market, tries))
                         continue
                     else:
+                        # 503/429 sin captcha: Amazon frena. Se espacia todo y se sigue solo
+                        self._slower(str(exc))
                         self._on_block(str(exc))
                     if tries < MAX_RETRIES or (exc.proxy and tries < MAX_RETRIES + 3):
                         jobs.put_nowait((asin, market, tries + 1))
                         continue
                     self._finish(asin, market, None, "bloqueado")
                 except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+                    self._slower("sin respuesta" if isinstance(exc, asyncio.TimeoutError) else "error de red")
                     if tries < MAX_RETRIES:
                         jobs.put_nowait((asin, market, tries + 1))
                         continue
                     self._finish(asin, market, None, f"error red: {type(exc).__name__}")
-                await self._sleep(random.uniform(self.s.delay_min, max(self.s.delay_min, self.s.delay_max)))
+                await self._sleep(self.pace * random.uniform(self.s.delay_min,
+                                                             max(self.s.delay_min, self.s.delay_max)))
             finally:
                 jobs.task_done()
 
@@ -405,6 +413,21 @@ class ScanEngine:
                     return msg["text"], offset
         return None, offset
 
+    def _slower(self, reason: str) -> None:
+        """Amazon se resiste o va lento: más pausa entre fichas (x1,5, hasta x6)."""
+        old = self.pace
+        self.pace = min(PACE_MAX, self.pace * 1.5)
+        if self.pace > old:
+            lo, hi = self.s.delay_min * self.pace, self.s.delay_max * self.pace
+            self._log(f"Amazon va lento ({reason}): espero {lo:.0f}-{hi:.0f} s entre fichas.")
+
+    def _faster(self) -> None:
+        """Cada ficha rápida y limpia relaja la pausa poco a poco hasta la normal."""
+        if self.pace > 1.0:
+            self.pace = max(1.0, self.pace * 0.95)
+            if self.pace == 1.0:
+                self._log("Amazon responde bien otra vez: vuelvo al ritmo normal.")
+
     def _on_block(self, reason: str) -> None:
         """Backoff exponencial global: 30 s, 60 s, 120 s ... máx. 10 min."""
         self._block_streak += 1
@@ -425,8 +448,11 @@ class ScanEngine:
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
             self._drop_proxy(proxy, "sin respuesta")
             raise
-        if proxy and time.monotonic() - start > self.s.proxy_max_seconds:
+        elapsed = time.monotonic() - start
+        if proxy and elapsed > self.s.proxy_max_seconds:
             self._drop_proxy(proxy, "muy lento")
+        elif not proxy and elapsed > SLOW_SECONDS:
+            self._slower(f"{elapsed:.0f} s en responder")
         if status in (503, 429, 403):
             raise Blocked(f"HTTP {status}", proxy, html=html, url=url, ua=ua)
         if status == 404:
@@ -444,6 +470,8 @@ class ScanEngine:
         if info.status == "captcha":
             raise Blocked("captcha", proxy, html=html, url=url, ua=ua)
         self.identities.report_success(proxy)
+        if elapsed <= SLOW_SECONDS:
+            self._faster()
         if info.other_offers and (info.price is None or self.s.only_prime):
             await self._fill_from_offers(session, info, ua, lang, proxy, timeout)
         await self._process(session, info)
