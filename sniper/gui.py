@@ -149,6 +149,10 @@ class SniperApp(ctk.CTk):
         self.captcha_var = tk.BooleanVar(value=self.settings.captcha_pause)
         ctk.CTkCheckBox(side, text="Si sale captcha, parar y avisarme", variable=self.captcha_var,
                         fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(anchor="w", padx=16, pady=(6, 2))
+        self.captcha_tg_var = tk.BooleanVar(value=self.settings.captcha_telegram)
+        ctk.CTkCheckBox(side, text="Mandarme a Telegram los captchas que no se resuelven solos",
+                        variable=self.captcha_tg_var, fg_color=ACCENT,
+                        hover_color=ACCENT_HOVER).pack(anchor="w", padx=16, pady=(2, 2))
         self.captcha_auto_entry = self._entry(
             side, "Captcha sin responder: reintentar a los (s) - luego cada (s) · 0 = nunca",
             f"{self.settings.captcha_retry_first:g}-{self.settings.captcha_retry_every:g}")
@@ -198,7 +202,6 @@ class SniperApp(ctk.CTk):
         self.captcha_btn = ctk.CTkButton(actions, text="✅ Ya lo he resuelto: continuar", height=48,
                                          fg_color="#f9a825", hover_color="#f57f17", text_color="black",
                                          font=ctk.CTkFont(size=15, weight="bold"), command=self._resume_captcha)
-        self._captcha_bell: str | None = None
         self.start_btn = ctk.CTkButton(actions, text="▶  INICIAR SNIPER", height=64, fg_color=ACCENT,
                                        hover_color=ACCENT_HOVER, text_color="black",
                                        font=ctk.CTkFont(size=20, weight="bold"), command=self._start)
@@ -465,6 +468,7 @@ class SniperApp(ctk.CTk):
             return False
         s.only_prime = bool(self.prime_var.get())
         s.captcha_pause = bool(self.captcha_var.get())
+        s.captcha_telegram = bool(self.captcha_tg_var.get())
         s.api_client_id = self.api_id_entry.get().strip()
         s.api_client_secret = self.api_secret_entry.get().strip()
         s.api_partner_tag = self.api_tag_entry.get().strip()
@@ -659,7 +663,6 @@ class SniperApp(ctk.CTk):
                     self._hide_captcha()
                     self.status_label.configure(text="Escaneando…")
                 elif kind == "captcha_extract":
-                    self._ring(3)
                     self._log(event[1])
                 elif kind == "finished":
                     self._hide_captcha()
@@ -680,16 +683,8 @@ class SniperApp(ctk.CTk):
         if quiet:   # reintento automático: sin abrir el navegador ni pitar
             self.status_label.configure(text="⏸ Captcha: continuando solo…")
             return
-        self.status_label.configure(text="⏸ Esperando a que resuelvas el captcha")
-        webbrowser.open(url)
-        self._ring(3)
-
-    def _ring(self, times: int) -> None:
-        """Pitido del sistema (y lo repite cada minuto mientras esté esperando)."""
-        for i in range(times):
-            self.after(i * 400, self.bell)
-        if self.captcha_btn.winfo_manager():     # botón visible: se sigue esperando
-            self._captcha_bell = self.after(60_000, lambda: self._ring(1))
+        # sin abrir el navegador: la app reintenta sola cada minuto
+        self.status_label.configure(text="⏸ Captcha: reintentando cada minuto…")
 
     def _resume_captcha(self) -> None:
         self._hide_captcha()
@@ -698,9 +693,6 @@ class SniperApp(ctk.CTk):
         self.status_label.configure(text="Escaneando…")
 
     def _hide_captcha(self) -> None:
-        if self._captcha_bell:
-            self.after_cancel(self._captcha_bell)
-            self._captcha_bell = None
         self.captcha_btn.pack_forget()
 
     def _add_row(self, row: dict) -> None:

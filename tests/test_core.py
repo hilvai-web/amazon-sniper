@@ -474,7 +474,8 @@ def test_captcha_solved_via_telegram(tmp_path, monkeypatch):
     monkeypatch.setattr(engmod.ScanEngine, "_fetch_bytes", fetch_bytes)
 
     s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
-                 telegram_token="T", telegram_chat_id="42", captcha_retry_first=0.1, captcha_retry_every=1.0)
+                 telegram_token="T", telegram_chat_id="42", captcha_retry_first=0.1, captcha_retry_every=1.0,
+                 captcha_telegram=True)
     events = queue.Queue()
     eng = ScanEngine(s, ["B0CAPTCHA1", "B0NORMAL02"], Database(tmp_path / "t.db"), events, fetcher=fetch)
     eng.start(); eng._thread.join(20)
@@ -559,3 +560,25 @@ def test_background_once(tmp_path, monkeypatch):
     text = (tmp_path / "ejecucion.log").read_text(encoding="utf-8")
     assert "Lista propia" in text and "Vuelta terminada: 2 productos mirados, 2 alertas" in text
     assert "🚨 ERROR B0BGTEST01" in text and not (tmp_path / "p.pid").exists()
+
+
+def test_captcha_not_sent_to_telegram_by_default(tmp_path, monkeypatch):
+    from sniper import engine as engmod
+    sent = []
+
+    async def no_send(*a, **kw):
+        sent.append(a); return True, "ok"
+    monkeypatch.setattr(engmod.telegram, "send_message", no_send)
+    monkeypatch.setattr(engmod.telegram, "send_photo", no_send)
+    calls = {"n": 0}
+
+    async def fetch(session, url, headers, proxy, timeout):
+        calls["n"] += 1
+        return 200, CAPTCHA_FORM if calls["n"] <= 4 else PAGE.format(price="180,00 €", lp="199,00 €")
+
+    s = Settings(markets=["ES"], concurrency=1, delay_min=0, delay_max=0, rescan_hours=0,
+                 telegram_token="T", telegram_chat_id="42", captcha_retry_first=0.05, captcha_retry_every=0.1)
+    assert s.captcha_telegram is False
+    eng = ScanEngine(s, ["B0CAPTCHA1"], Database(tmp_path / "t.db"), queue.Queue(), fetcher=fetch)
+    eng.start(); eng._thread.join(20)
+    assert not eng.running and sent == []

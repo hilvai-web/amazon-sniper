@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 APP_NAME = "Amazon Sniper"
-APP_VERSION = "2.8.1"
+APP_VERSION = "2.8.2"
 
 
 def app_dir() -> Path:
@@ -76,6 +76,7 @@ class Settings:
     api_partner_tag: str = ""           # ID de afiliado de amazon.es (xxxx-21)
     api_interval: float = 1.1           # segundos entre peticiones a la API
     captcha_pause: bool = True          # ante captcha/503: parar y esperar a que lo resuelvas
+    captcha_telegram: bool = False      # mandar a Telegram los captchas que no se resuelven solos
     captcha_retry_first: float = 10.0   # si no respondes, reintenta solo a los 10 s...
     captcha_retry_every: float = 60.0   # ...y luego cada minuto (0 = esperar siempre a ti)
     settings_version: int = 3

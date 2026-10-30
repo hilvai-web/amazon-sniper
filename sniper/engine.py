@@ -335,10 +335,11 @@ class ScanEngine:
             self._emit("captcha", url, True)
             return
         form = parse_captcha_form(exc.html, exc.url) if exc and exc.html else None
-        by_telegram = bool(form and session and self.s.telegram_token and self.s.telegram_chat_id)
+        by_telegram = bool(form and session and self.s.captcha_telegram
+                           and self.s.telegram_token and self.s.telegram_chat_id)
         self._log(f"[!] Amazon sigue pidiendo verificación tras {CAPTCHA_SILENT_RETRIES} intentos ({reason}). "
                   + ("Te la he mandado a Telegram: contesta allí, o " if by_telegram else "")
-                  + "resuélvela en el navegador y pulsa «Continuar»"
+                  + "pulsa «Continuar» si quieres seguir ya"
                   + (f"; si no, reintento solo en {auto:.0f} s." if auto else "."))
         self._emit("captcha", url, False)
         if by_telegram:

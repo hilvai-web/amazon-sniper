@@ -116,7 +116,7 @@ HEADLESS = True              # False para ver el navegador mientras trabaja
 DELAY_RANGE = (5.0, 10.0)    # espera aleatoria entre páginas (segundos)
 # Si sale captcha, abre una ventana visible del navegador para que lo resuelvas
 # tú; al resolverlo sigue solo, con las mismas cookies. False = esperar y reintentar.
-MANUAL_CAPTCHA = True
+MANUAL_CAPTCHA = False      # True = abrir una ventana para resolverlo a mano
 MANUAL_CAPTCHA_MINUTES = 15  # tiempo máximo esperando a que lo resuelvas
 PAGE_TIMEOUT_MS = 45_000
 MAX_RETRIES = 2              # reintentos por página ante captcha/timeout
